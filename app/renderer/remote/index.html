@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#181825">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bible Presenter">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" href="/icon-192.png">
+<title>Bible Presenter</title>
+<style>
+  :root {
+    --crust:#11111b; --mantle:#181825; --base:#1e1e2e; --s0:#313244; --s1:#45475a; --s2:#585b70;
+    --text:#cdd6f4; --strong:#e4e8fb; --sub:#a6adc8; --muted:#7f849c;
+    --blue:#89b4fa; --green:#a6e3a1; --red:#f38ba8; --yellow:#f9e2af;
+    --raised:#24243a; --hair:rgba(205,214,244,.08); --hair2:rgba(205,214,244,.13); --fill:rgba(205,214,244,.06);
+    --sh: 0 1px 2px rgba(0,0,0,.3), 0 4px 12px -4px rgba(0,0,0,.4);
+    --safe-b: env(safe-area-inset-bottom, 0px); --safe-t: env(safe-area-inset-top, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--crust); color: var(--text);
+    font: 15px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
+  button, select, input { font: inherit; color: inherit; }
+  button { touch-action: manipulation; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  [hidden] { display: none !important; }
+
+  header { display: flex; align-items: center; gap: 10px; padding: calc(10px + var(--safe-t)) 14px 10px;
+    background: var(--mantle); border-bottom: 1px solid var(--s0); }
+  #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--s2); flex: none; transition: background .2s; }
+  #dot.on { background: var(--green); box-shadow: 0 0 8px rgba(166,227,161,.55); }
+  #plSel { flex: 1; min-width: 0; background: var(--s0); border: 1px solid var(--s1); border-radius: 9px;
+    padding: 8px 10px; font-size: 15px; appearance: none; -webkit-appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--sub) 50%), linear-gradient(135deg, var(--sub) 50%, transparent 50%);
+    background-position: calc(100% - 16px) 52%, calc(100% - 11px) 52%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 28px; }
+
+  #wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+  /* What is on the projector right now, and what comes next. */
+  #liveCard { margin: 10px 12px 0; padding: 10px 12px 11px; background: var(--base); border: 1px solid var(--s0);
+    border-radius: 14px; }
+  #liveCard.off { border-color: rgba(243,139,168,.45); }
+  .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--sub); font-weight: 700; }
+  #liveHead { display: flex; align-items: center; gap: 8px; min-height: 18px; }
+  #liveLbl { flex: 1; min-width: 0; }
+  #liveLbl::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px;
+    background: var(--green); vertical-align: 1px; }
+  #liveLbl.off { color: var(--red); }
+  #liveLbl.off::before { background: var(--red); }
+  #pos { flex: none; font-size: 12px; font-weight: 700; color: var(--sub); font-variant-numeric: tabular-nums;
+    background: var(--mantle); border: 1px solid var(--s0); border-radius: 999px; padding: 1px 8px; }
+  #liveText { margin-top: 5px; font-size: 16.5px; font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 1.35em; }
+  #liveCard.off #liveText, #liveCard.off #pics { opacity: .45; }
+  #liveText.media { font-style: italic; font-weight: 500; color: var(--sub); font-size: 15px; }
+  #liveRef { margin-top: 2px; font-size: 13px; color: var(--blue); }
+  #nextRow { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--s0); font-size: 14px; color: var(--sub);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #nextRow .lbl { margin-right: 6px; }
+  #armed { margin-top: 7px; font-size: 13px; color: var(--yellow); overflow-wrap: anywhere; }
+
+  /* Picture slides (presentations, media): the slide itself and the next one. */
+  #pics { display: grid; grid-template-columns: 1.65fr 1fr; gap: 8px; margin-top: 7px; align-items: end; }
+  .pic { position: relative; aspect-ratio: 16 / 9; background: #000 center / contain no-repeat; border-radius: 8px;
+    border: 1px solid var(--s0); overflow: hidden; }
+  .pic.blank { background: var(--mantle); }
+  .pic.blank::after { content: attr(data-empty); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--sub); font-size: 12px; font-style: italic; padding: 6px; text-align: center; overflow: hidden;
+    white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.3; }
+  #picNow { border-color: var(--green); }
+  #liveCard.off #picNow { border-color: var(--red); }
+  .picCap { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--sub); margin-bottom: 3px; }
+
+  #tabs { display: flex; gap: 4px; margin: 10px 12px 0; background: var(--mantle); border: 1px solid var(--s0);
+    border-radius: 11px; padding: 3px; }
+  #tabs button { flex: 1; min-width: 0; background: none; border: 0; border-radius: 8px; padding: 8px 4px; color: var(--sub);
+    font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #tabs button.on { background: var(--s0); color: var(--text); }
+
+  #list { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 10px 12px 14px;
+    scrollbar-width: thin; scrollbar-color: var(--s1) transparent; overscroll-behavior: contain;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px); mask-image: linear-gradient(to bottom, transparent 0, #000 10px); }
+  #list::-webkit-scrollbar { width: 6px; }
+  #list::-webkit-scrollbar-thumb { background: var(--s1); border-radius: 3px; }
+  #listTitle { font-weight: 700; font-size: 14px; color: var(--sub); padding: 0 2px 8px; overflow-wrap: anywhere; }
+  .empty { color: var(--sub); text-align: center; padding: 28px 16px; font-size: 14px; line-height: 1.5; }
+  .row { display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left; background: var(--base);
+    border: 1px solid var(--s0); border-radius: 11px; padding: 10px 12px; margin-bottom: 7px; }
+  .row:active, .tile:active { background: var(--s0); }
+  .row .n { flex: none; min-width: 22px; color: var(--sub); font-size: 12px; font-weight: 700; padding-top: 2px; font-variant-numeric: tabular-nums; }
+  .row .b { flex: 1; min-width: 0; }
+  .row .sec { font-size: 11px; color: var(--blue); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+  .row .t { font-size: 15px; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .row .t.dim { color: var(--sub); font-style: italic; }
+  .row .ty { flex: none; width: 22px; height: 22px; color: var(--sub); }
+  .row.live { border-color: var(--green); background: rgba(166,227,161,.10); }
+  .row.live .n { color: var(--green); }
+  .row.armed { border-color: var(--yellow); }
+  .row.open { border-color: var(--blue); }
+
+  /* Picture slides as a grid of thumbnails. */
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .tile { position: relative; display: block; width: 100%; padding: 0; background: var(--base); border: 2px solid var(--s0);
+    border-radius: 10px; overflow: hidden; }
+  .tile .im { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000 center / contain no-repeat; }
+  .tile .im.none { background: var(--mantle); display: flex; align-items: center; justify-content: center; color: var(--sub); }
+  .tile .im.none svg { width: 26px; height: 26px; }
+  .tile .im.none { font-size: 12px; line-height: 1.3; padding: 6px; overflow: hidden; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .tile .num { position: absolute; left: 5px; bottom: 5px; min-width: 22px; padding: 1px 6px; border-radius: 6px;
+    background: rgba(17,17,27,.82); color: var(--text); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tile.live { border-color: var(--green); }
+  .tile.live .num { background: var(--green); color: var(--crust); }
+  .tile.armed { border-color: var(--yellow); }
+  .tile.armed .num { background: var(--yellow); color: var(--crust); }
+
+  /* Presentation library. */
+  #presSearch { width: 100%; margin: 0 0 10px; background: var(--s0); border: 1px solid var(--s1); border-radius: 10px;
+    padding: 9px 12px; font-size: 16px; outline: none; }
+  #presSearch:focus { border-color: var(--blue); }
+  .grp { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--sub); font-weight: 700; padding: 6px 2px 6px; }
+  .grp:first-child { padding-top: 0; }
+  .pres { align-items: center; }
+  .pres .cv { flex: none; width: 88px; aspect-ratio: 16 / 9; border-radius: 6px; background: #000 center / contain no-repeat; border: 1px solid var(--s0); }
+  .pres .t { -webkit-line-clamp: 2; font-weight: 600; }
+  .pres .cnt { flex: none; display: flex; align-items: center; gap: 4px; color: var(--sub); font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pres .cnt svg { width: 15px; height: 15px; }
+
+  footer { padding: 10px 12px calc(12px + var(--safe-b)); background: var(--mantle); border-top: 1px solid var(--s0);
+    display: grid; gap: 8px; }
+  .r2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .r1 { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; }
+  .btn { border: 1px solid var(--s1); background: var(--s0); border-radius: 12px; padding: 12px 8px; font-weight: 600; font-size: 15px; }
+  .btn:active { transform: translateY(1px); background: var(--s1); }
+  .btn.big { padding: 18px 8px; font-size: 18px; }
+  .btn.primary { background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,0) 60%), var(--blue); color: var(--crust); border-color: rgba(17,17,27,.35);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 1px 2px rgba(0,0,0,.35), 0 8px 20px -8px rgba(137,180,250,.5); }
+  .btn.primary:active { background: #739fec; box-shadow: inset 0 1px 3px rgba(0,0,0,.25); }
+  .btn.warn { color: var(--red); }
+  .btn:disabled { opacity: .45; }
+
+  #conn { position: fixed; left: 12px; right: 12px; top: calc(60px + var(--safe-t)); z-index: 5; background: #3a2230;
+    color: #ffd6e0; border: 1px solid rgba(243,139,168,.5); border-radius: 10px; padding: 9px 12px; font-size: 13.5px; text-align: center; }
+
+  #pin { position: fixed; inset: 0; z-index: 10; background: var(--crust); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; padding: 24px; text-align: center; }
+  #pin img { width: 72px; height: 72px; border-radius: 16px; margin-bottom: 14px; }
+  #pin h1 { font-size: 20px; margin: 0 0 6px; }
+  #pin p { margin: 0 0 18px; color: var(--sub); max-width: 320px; line-height: 1.45; }
+  #pinInput { width: 220px; text-align: center; font-size: 30px; letter-spacing: .3em; padding: 10px 8px 10px 16px;
+    background: var(--s0); border: 1px solid var(--s1); border-radius: 12px; outline: none; }
+  #pinInput:focus { border-color: var(--blue); }
+  #pinBtn { margin-top: 14px; width: 220px; }
+  #pinErr { margin-top: 12px; min-height: 20px; color: var(--red); font-size: 14px; }
+
+  /* Tablets and phones held sideways: what's on screen on the left, the list on the right. */
+  @media (min-width: 720px) and (orientation: landscape), (min-width: 900px) {
+    #wrap { display: grid; grid-template-columns: minmax(300px, 42%) 1fr; grid-template-rows: auto minmax(0, 1fr); }
+    #liveCard { grid-column: 1; grid-row: 1 / 3; align-self: start; margin-bottom: 12px; }
+    #tabs { grid-column: 2; grid-row: 1; }
+    #list { grid-column: 2; grid-row: 2; }
+    #liveText { -webkit-line-clamp: 10; font-size: 20px; }
+    #pics { grid-template-columns: 1fr; }
+    .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  /* A phone on its side: one row of buttons, so the list keeps its height. */
+  @media (max-height: 560px) and (orientation: landscape) {
+    #pics { grid-template-columns: 1.65fr 1fr; }
+    header { padding-top: calc(6px + var(--safe-t)); padding-bottom: 6px; }
+    #plSel { padding-top: 6px; padding-bottom: 6px; }
+    footer { grid-template-columns: 1fr 1fr 1fr 1.6fr; padding-top: 8px; padding-bottom: calc(8px + var(--safe-b));
+      padding-left: calc(12px + env(safe-area-inset-left, 0px)); padding-right: calc(12px + env(safe-area-inset-right, 0px)); }
+    .r1, .r2 { display: contents; }
+    .btn, .btn.big { padding: 11px 6px; font-size: 15px; }
+    #wrap { padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+  }
+
+
+  /* Surfaces: hairlines and soft shadows, one accent. */
+  body { font-feature-settings: "ss01", "cv11"; -webkit-font-smoothing: antialiased; }
+  header { background: var(--mantle); border-bottom: 1px solid rgba(0,0,0,.45); box-shadow: inset 0 -1px 0 var(--hair); }
+  #plSel { background-color: rgba(10,10,18,.45); border-color: var(--hair2); box-shadow: inset 0 1px 2px rgba(0,0,0,.25); font-weight: 500; }
+  #liveCard { background: var(--raised); border-color: var(--hair); box-shadow: inset 0 1px 0 rgba(255,255,255,.04), var(--sh); }
+  #liveCard.off { border-color: rgba(243,139,168,.4); }
+  .lbl { text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 600; }
+  #liveLbl::before { box-shadow: 0 0 0 3px rgba(166,227,161,.18); }
+  #liveLbl.off::before { box-shadow: 0 0 0 3px rgba(243,139,168,.2); }
+  #pos { background: rgba(10,10,18,.45); border-color: var(--hair); }
+  .picCap { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; }
+  .pic { border: 0; box-shadow: 0 0 0 1px rgba(0,0,0,.55), inset 0 0 0 1px var(--hair), var(--sh); }
+  #picNow { box-shadow: 0 0 0 2px var(--green), 0 0 0 5px rgba(166,227,161,.14), var(--sh); }
+  #liveCard.off #picNow { box-shadow: 0 0 0 2px var(--red), var(--sh); }
+  #tabs { background: rgba(10,10,18,.45); border-color: var(--hair); box-shadow: inset 0 1px 2px rgba(0,0,0,.3); }
+  #tabs button.on { background: rgba(205,214,244,.12); color: var(--strong); box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 1px 2px rgba(0,0,0,.35); }
+  #listTitle { color: var(--strong); font-size: 15px; letter-spacing: -.01em; }
+  .grp { text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+  .row { background: var(--raised); border-color: var(--hair); box-shadow: inset 0 1px 0 rgba(255,255,255,.035), 0 1px 2px rgba(0,0,0,.25); }
+  .row:active { background: #2a2a42; }
+  .row .sec { text-transform: none; letter-spacing: 0; font-size: 12px; }
+  .row.live { background: rgba(166,227,161,.08); border-color: rgba(166,227,161,.55); box-shadow: 0 0 0 3px rgba(166,227,161,.1); }
+  .row.armed { border-color: rgba(249,226,175,.6); box-shadow: 0 0 0 3px rgba(249,226,175,.1); }
+  .row.open { border-color: rgba(137,180,250,.55); box-shadow: 0 0 0 3px rgba(137,180,250,.12); }
+  .tile { border: 0; box-shadow: 0 0 0 1px rgba(0,0,0,.55), inset 0 0 0 1px var(--hair), var(--sh); }
+  .tile.live { box-shadow: 0 0 0 2px var(--green), 0 0 0 5px rgba(166,227,161,.14), var(--sh); }
+  .tile.armed { box-shadow: 0 0 0 2px var(--yellow), 0 0 0 5px rgba(249,226,175,.12), var(--sh); }
+  #presSearch { background: rgba(10,10,18,.45); border-color: var(--hair2); box-shadow: inset 0 1px 2px rgba(0,0,0,.25); }
+  footer { background: var(--mantle); border-top: 1px solid rgba(0,0,0,.45); box-shadow: inset 0 1px 0 var(--hair); }
+  .btn { background: var(--fill); border-color: var(--hair2); box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 1px 2px rgba(0,0,0,.3); font-weight: 600; }
+  .btn:active { background: rgba(205,214,244,.04); box-shadow: none; transform: translateY(1px); }
+  .btn.warn { color: var(--red); }
+</style>
+</head>
+<body>
+<header>
+  <span id="dot"></span>
+  <select id="plSel" aria-label="playlist"></select>
+</header>
+
+<div id="wrap">
+  <section id="liveCard">
+    <div id="liveHead"><span class="lbl" id="liveLbl"></span><span id="pos" hidden></span></div>
+    <div id="liveText"></div>
+    <div id="liveRef"></div>
+    <div id="pics" hidden>
+      <div class="pic" id="picNow"></div>
+      <div><div class="picCap" id="capNext"></div><div class="pic" id="picNext"></div></div>
+    </div>
+    <div id="armed" hidden></div>
+    <div id="nextRow" hidden><span class="lbl" id="nextLbl"></span><span id="nextText"></span></div>
+  </section>
+  <nav id="tabs">
+    <button data-tab="slides" class="on" id="tabSlides"></button>
+    <button data-tab="service" id="tabService"></button>
+    <button data-tab="pres" id="tabPres"></button>
+  </nav>
+  <div id="list"></div>
+</div>
+
+<footer>
+  <div class="r2">
+    <button class="btn" id="bText"></button>
+    <button class="btn warn" id="bScreen"></button>
+  </div>
+  <div class="r1">
+    <button class="btn big" id="bPrev"></button>
+    <button class="btn big primary" id="bNext"></button>
+  </div>
+</footer>
+
+<div id="conn" hidden></div>
+
+<div id="pin" hidden>
+  <img src="/apple-touch-icon.png" alt="">
+  <h1>Bible Presenter</h1>
+  <p id="pinHint"></p>
+  <input id="pinInput" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" enterkeyhint="go">
+  <button class="btn primary" id="pinBtn"></button>
+  <div id="pinErr"></div>
+</div>
+
+<script src="/ui.js"></script>
+<script src="/remote.js"></script>
+</body>
+</html>

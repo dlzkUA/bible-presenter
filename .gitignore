@@ -1,0 +1,30 @@
+# Dependencies — reinstalled by npm install, never committed
+node_modules/
+
+# Build output; release/ holds the files for a GitHub release (scripts/release.js)
+src-tauri/target/
+src-tauri/gen/
+dist/
+release/
+
+# The npm lockfile is not used.
+# src-tauri/Cargo.lock IS committed: it pins the Rust libraries.
+package-lock.json
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# Local secrets — never commit a signing key or a token
+.env
+*.key
+*.key.pub.bak
+*.pem
+*.p12
+
+# Generated copy of the guide for Notion import (images duplicated) — build it locally
+docs/manual/import/

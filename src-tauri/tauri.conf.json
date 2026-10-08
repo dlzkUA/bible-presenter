@@ -1,0 +1,109 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Bible Presenter",
+  "version": "../package.json",
+  "mainBinaryName": "Bible Presenter",
+  "identifier": "com.biblepresenter.app",
+  "build": {
+    "frontendDist": "../app"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": {
+        "default-src": "'self' asset: http://asset.localhost",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' asset: http://asset.localhost data: blob:",
+        "media-src": "'self' asset: http://asset.localhost blob:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "worker-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'"
+      },
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$CONFIG/BiblePresenter/**"
+        ]
+      },
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis",
+      "app",
+      "dmg"
+    ],
+    "createUpdaterArtifacts": true,
+    "publisher": "Bible Presenter",
+    "category": "Productivity",
+    "shortDescription": "Presentation software for churches",
+    "longDescription": "Bible verses, songs, presentations and media on the projector, live captions for vMix and OBS, a stage display and a phone remote.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "windows/installerHeader.bmp",
+        "sidebarImage": "windows/installerSidebar.bmp",
+        "installerHooks": "windows/hooks.nsh",
+        "languages": [
+          "English",
+          "Ukrainian",
+          "Russian",
+          "Polish",
+          "German",
+          "French",
+          "Spanish",
+          "PortugueseBR",
+          "Italian"
+        ],
+        "displayLanguageSelector": false
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-",
+      "dmg": {
+        "background": "macos/dmg-background.png",
+        "windowSize": {
+          "width": 540,
+          "height": 380
+        },
+        "appPosition": {
+          "x": 120,
+          "y": 195
+        },
+        "applicationFolderPosition": {
+          "x": 420,
+          "y": 195
+        }
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU0Qjk1ODE2RDFFQjc3MjMKUldRamQrdlJGbGk1NUJadDUyQ1BSWkQzOGZ5QkFhbEhQazNBRnliR0xCZzlQNFVOblE4Z25kWmQK",
+      "endpoints": [
+        "https://github.com/OWNER/REPO/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

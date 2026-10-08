@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8" />
+<title>Output</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    cursor: none;
+  }
+  /* Two stacked layers crossfade between slides (наплыв, як у ProPresenter).
+     Theme CSS variables are set PER LAYER so the outgoing slide keeps its own
+     styling while the incoming one fades in with the new theme. */
+  .slideLayer {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: var(--theme-valign, center);
+    box-sizing: border-box;
+    padding: 6vh 10vw;
+    opacity: 0;
+    transition: opacity var(--trans, 300ms) ease;
+    background-color: transparent;
+    background-size: cover;
+    background-position: center;
+  }
+  .slideLayer.visible { opacity: 1; }
+  .slideLayer.imageSlide { padding: 0; background-size: contain; background-repeat: no-repeat; background-color: #000; }
+  /* The background lives in ONE shared stage underneath both text layers.
+     Keeping it out of the crossfading layers is what lets a looping video keep
+     playing across slide changes instead of restarting on every swap. */
+  #bgStage {
+    position: fixed; inset: 0; z-index: 0;
+    background-size: cover; background-position: center; background-repeat: no-repeat;
+  }
+  /* Text layers float above the shared background. */
+  .slideLayer { z-index: 1; }
+  /* A layer showing its own media (announcement photo/video) must cover it. */
+  .slideLayer.imageSlide { z-index: 3; }
+  .slideLayer > .verseText, .slideLayer > .verseRef { position: relative; z-index: 1; }
+  /* A full-frame announcement video (not a background). */
+  .fullVideo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; z-index: 2; }
+  .verseText {
+    color: var(--theme-color, #fff);
+    font-family: var(--theme-font, "Georgia", "PT Serif", serif);
+    font-size: var(--theme-size, 5.2vh);
+    line-height: var(--theme-line, 1.45);
+    text-align: var(--theme-align, center);
+    text-transform: var(--theme-transform, none);
+    letter-spacing: var(--theme-spacing, 0);
+    font-weight: var(--theme-weight, 400);
+    text-shadow: var(--theme-shadow, 0 2px 12px rgba(0,0,0,0.6));
+    max-width: 100%;
+    white-space: pre-wrap; /* preserve the slide's own line breaks (songs!) */
+  }
+  .verseRef {
+    color: var(--theme-color, #fff);
+    font-family: var(--theme-font, "Georgia", serif);
+    font-size: calc(var(--theme-size, 5.2vh) * 0.5);
+    opacity: 0.7;
+    margin-top: 3vh;
+    text-align: var(--theme-align, center);
+    display: none;
+  }
+</style>
+</head>
+<body>
+  <div id="bgStage"></div>
+  <script src="../bridge.js"></script>
+  <script src="../../shared/bgStage.js"></script>
+  <div class="slideLayer" id="layerA"><video class="fullVideo" playsinline></video><div class="verseText"></div><div class="verseRef"></div></div>
+  <div class="slideLayer" id="layerB"><video class="fullVideo" playsinline></video><div class="verseText"></div><div class="verseRef"></div></div>
+  <script src="output.js"></script>
+</body>
+</html>

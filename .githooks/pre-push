@@ -1,0 +1,18 @@
+#!/bin/sh
+# There is no CI: everything that reaches master (or main) is checked here,
+# on this computer, before the push leaves it. See CLAUDE.md.
+# In an emergency a single push can skip it: git push --no-verify
+while read local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/master|refs/heads/main)
+      echo "Pushing to ${remote_ref#refs/heads/}: running the checks first (npm run check)…"
+      node scripts/check.js </dev/null || {
+        echo ""
+        echo "Push stopped: a check failed. Fix it and push again."
+        exit 1
+      }
+      exit 0
+      ;;
+  esac
+done
+exit 0

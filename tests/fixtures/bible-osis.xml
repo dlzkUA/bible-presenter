@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<osis><osisText>
+  <div type="book" osisID="Ps">
+    <chapter osisID="Ps.23">
+      <verse osisID="Ps.23.1" sID="Ps.23.1"/>The <w lemma="x">LORD</w> is my shepherd; I shall not want.<verse eID="Ps.23.1"/>
+    </chapter>
+  </div>
+</osisText></osis>

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Bible Presenter — Live</title>
+<style>
+  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent}
+  .layer{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;box-sizing:border-box;padding:6vh 8vw;opacity:0;
+    transition:opacity var(--trans,300ms) ease;background-size:contain;
+    background-repeat:no-repeat;background-position:center}
+  .layer.visible{opacity:1}
+  .layer{z-index:1}
+  #bgs{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .layer.pos-bottom{justify-content:flex-end;padding-bottom:8vh}
+  .layer.pos-top{justify-content:flex-start;padding-top:8vh}
+  /* Image slides (presentations, announcements) are never restyled. */
+  .layer.img{padding:0 !important;justify-content:center !important;background-size:contain}
+  .bgv{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;display:none}
+  .fullv{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:2;display:none}
+  .body{position:relative;z-index:1;width:100%}
+  .txt{max-width:100%;text-align:var(--align,center)}
+  .txt .ln{display:inline-block;border-radius:var(--radius,0);color:var(--color,#fff);font-family:var(--font,"Segoe UI",sans-serif);
+    font-size:var(--size,4vh);line-height:var(--line,1.25);text-transform:var(--tform,none);
+    letter-spacing:var(--spacing,0);font-weight:var(--weight,400);
+    text-shadow:var(--shadow,none);white-space:pre-wrap;
+    -webkit-text-stroke:var(--stroke,0) var(--stroke-color,#000);paint-order:stroke fill}
+  .txt .lnwrap{display:block}
+  .ref{font-family:var(--font,"Segoe UI",sans-serif);
+    font-size:calc(var(--size,4vh)*var(--ref-size,.62));margin-top:.55vh;display:none;box-sizing:border-box}
+  .ref .ln{display:inline-block;color:var(--color,#fff);border-radius:var(--radius,0)}
+  .txtblock{display:inline-block;border-radius:var(--radius,0)}
+  .txtblock.full{display:block;width:100%;box-sizing:border-box}
+  .layer.fullbar{padding-left:0;padding-right:0}
+</style></head><body>
+<div id="bgs"></div>
+<script src="/bgstage.js"></script>
+<div class="layer" id="a"><video class="bgv" muted loop playsinline></video><video class="fullv" playsinline></video><div class="body"><div class="txt"></div><div class="ref"><span class="ln"></span></div></div></div>
+<div class="layer" id="b"><video class="bgv" muted loop playsinline></video><video class="fullv" playsinline></video><div class="body"><div class="txt"></div><div class="ref"><span class="ln"></span></div></div></div>
+<script>
+const BG = window.createBgStage ? window.createBgStage(document.getElementById("bgs")) : null;
+const qs = new URLSearchParams(location.search);
+const layers=[document.getElementById("a"),document.getElementById("b")];
+let active=0, STYLES={}, ST={}, lastPayload=null;
+function pickStyle(p){
+  // Bible slides carry a reference; everything else is treated as a song.
+  const kind = (p && p.kind) ? p.kind : ((p && p.reference) ? "bible" : "song");
+  return (STYLES && STYLES[kind]) || (STYLES && STYLES.song) || {};
+}
+
+// This page is what vMix/OBS actually renders — often on a DIFFERENT computer
+// than the one running Bible Presenter's control panel. A font name resolved
+// against the control PC's font list can still be wrong here, because THIS
+// machine's fonts are what really matters. Canvas-probe locally as the final
+// check: if the named font genuinely isn't renderable here, fall back to the
+// theme's own safe stack instead of leaving Chromium to guess.
+const __fc = document.createElement("canvas").getContext("2d");
+function fontRendersHere(name) {
+  if (!name || !__fc) return false;
+  const probe = "mmmmmmmmmmlli";
+  __fc.font = "72px monospace";
+  const base = __fc.measureText(probe).width;
+  __fc.font = '72px "' + name.replace(/"/g, '\"') + '", monospace';
+  return __fc.measureText(probe).width !== base;
+}
+function safeFontStack(name, fallback) {
+  const clean = String(name || "").split(",")[0].trim().replace(/^["']+|["']+$/g, "");
+  if (clean && fontRendersHere(clean)) return '"' + clean.replace(/"/g, '\"') + '", "' + fallback + '", sans-serif';
+  // Not renderable on THIS machine — skip straight to the safe fallback so the
+  // stream always shows readable text instead of an unpredictable substitute.
+  return '"' + fallback + '", sans-serif';
+}
+
+function hexToRgba(hex,a){
+  const h=String(hex||"#000").replace("#","");
+  const n=parseInt(h.length===3?h.split("").map(c=>c+c).join(""):h,16);
+  return "rgba("+((n>>16)&255)+","+((n>>8)&255)+","+(n&255)+","+a+")";
+}
+function shadowCss(on,strength){
+  if(!on) return "none";
+  var s=Math.max(0,Math.min(100,Number(strength==null?55:strength)));
+  var blur=s*0.30, off=s*0.06, op=(0.25+s*0.0070).toFixed(2);
+  // two layers: a tight core for punch, a wide halo to separate text from busy video
+  return "0 "+off.toFixed(1)+"px "+(blur*0.45).toFixed(1)+"px rgba(0,0,0,"+op+"), 0 0 "+blur.toFixed(1)+"px rgba(0,0,0,"+op+")";
+}
+function applyPageBg(st){
+  const base = st || ST || (STYLES && STYLES.song) || {};
+  const forceTransparent = qs.get("transparent")||qs.get("nobg");
+  const solid = !forceTransparent && base.pageBg==="solid";
+  document.body.style.background = solid ? (base.pageBgColor||"#000") : "transparent";
+}
+function applyPosition(l,st){
+  const b=l.querySelector(".body");
+  if(b) b.style.transform = "translate("+(st.offsetX||0)+"vw, "+(st.offsetY||0)+"vh)";
+  l.classList.toggle("fullbar", !!(st.bars && st.barMode==="block" && st.barFullWidth));
+  l.style.setProperty("--radius",(st.barRadius||0)+"px");
+  l.style.setProperty("--ref-size",String(st.refSize||0.62));
+  // A side inset keeps the plate off the frame edges (rounded-card looks).
+  if (st.barInset) { l.style.paddingLeft=st.barInset+"vw"; l.style.paddingRight=st.barInset+"vw"; }
+  l.classList.remove("pos-bottom","pos-top");
+  if(st.position==="bottom") l.classList.add("pos-bottom");
+  else if(st.position==="top") l.classList.add("pos-top");
+}
+// Style the text: either the stream's own theme, or the projector theme scaled down.
+function applyTextStyle(l,theme){
+  const set=(k,v)=>l.style.setProperty(k,v);
+  if(ST.useOwnTheme){
+    set("--font", safeFontStack(ST.fontFamily, "Segoe UI"));
+    set("--size",((ST.fontSize||46)/1080)*100+"vh");
+    set("--color",ST.color||"#fff");
+    set("--weight",ST.bold?"700":"400");
+    set("--tform",ST.uppercase?"uppercase":"none");
+    set("--spacing",(ST.letterSpacing||0)+"em");
+    set("--line",String(ST.lineHeight||1.25));
+    set("--shadow",shadowCss(ST.shadow,ST.shadowStrength));
+    set("--stroke",(ST.outlineWidth||0)+"px"); set("--stroke-color",ST.outlineColor||"#000");
+    set("--align",ST.align||"center");
+  } else {
+    const t=theme||{};
+    set("--font", safeFontStack(t.fontFamily, "Segoe UI"));
+    const proj=t.fontSize?(t.fontSize/1080)*100:5.2;
+    set("--size",proj*((ST.scale||100)/100)+"vh");
+    set("--color",t.color||"#fff");
+    set("--weight",t.bold?"700":"400");
+    set("--tform",t.uppercase?"uppercase":"none");
+    set("--spacing",(t.letterSpacing??0)+"em");
+    set("--line",String(t.lineHeight??1.3));
+    set("--shadow",shadowCss(t.shadow!==false,ST.shadowStrength));
+    set("--stroke",(ST.outlineWidth||0)+"px"); set("--stroke-color",ST.outlineColor||"#000");
+    set("--align",t.align||"center");
+  }
+}
+function render(l,p){
+  ST = pickStyle(p);                       // song or bible look
+  applyPageBg(ST);
+  applyPosition(l, ST);
+  const txt=l.querySelector(".txt"), ref=l.querySelector(".ref"), body=l.querySelector(".body");
+  const fullv=l.querySelector(".fullv");
+  fullv.style.display="none"; if(fullv.src){fullv.pause();fullv.removeAttribute("src");fullv.load();}
+  // Background lives in one shared stage: it is not reloaded on every slide,
+  // only paused under media slides and swapped once a new clip is ready.
+  if(p.video||p.image){ if(BG) BG.pause(); }
+  if(p.video){
+    fullv.src=p.video; fullv.style.display="block"; fullv.muted=true; {const p4=fullv.play(); if(p4&&p4.catch) p4.catch(()=>{});}
+    l.style.backgroundImage="none"; l.classList.add("img"); body.style.display="none";
+    return;
+  }
+  body.style.display="";
+  // Presentations / announcements: untouched, full frame.
+  if(p.image){
+    l.style.backgroundImage='url("'+p.image.replace(/"/g,'\\"')+'")';
+    l.classList.add("img");
+    txt.style.display="none"; ref.style.display="none";
+    return;
+  }
+  l.style.backgroundImage="none"; l.classList.remove("img"); txt.style.display="";
+  // Theme background media — only when the stream inherits the projector theme.
+  const th=p.theme;
+  if(BG){
+    if(!ST.useOwnTheme && th && th.bgUrl){
+      const isVid = th.bgType==="video" || /[.](mp4|webm|mov|m4v)$/i.test(th.bgUrl);
+      BG.set(th.bgUrl, isVid ? "video" : "image", th.bgFit==="contain" ? "contain" : "cover", Math.max(250, Number(p.transitionMs ?? 300)));
+    } else BG.set(null, null, null, Math.max(250, Number(p.transitionMs ?? 300)));
+  }
+  applyTextStyle(l,p.theme);
+  const barCss = ST.bars ? "background:"+hexToRgba(ST.barColor,ST.barOpacity)+";padding:"+(ST.barPadding||0)+"em "+((ST.barPadding||0)*1.6)+"em;" : "";
+  txt.innerHTML="";
+  txt.style.textAlign = ST.align || "center";
+  const raw=String(p.text||"");
+  const parts = ST.joinLines ? [raw.split("\n").join(" ")] : raw.split("\n");
+  if(ST.bars && ST.barMode==="block"){
+    // One bar wrapping the whole paragraph (Bible look).
+    const block=document.createElement("div"); block.className="txtblock"+(ST.barFullWidth?" full":""); block.setAttribute("style",barCss);
+    parts.forEach((ln,i)=>{ const d=document.createElement("div"); d.className="ln"; d.style.display="block"; d.textContent=ln; block.appendChild(d); });
+    txt.appendChild(block);
+  } else {
+    parts.forEach((ln,i)=>{
+      const wrap=document.createElement("div");
+      if(i>0) wrap.style.marginTop=(ST.bars?0.18:0)+"em";
+      const span=document.createElement("span"); span.className="ln"; span.setAttribute("style",barCss); span.textContent=ln;
+      wrap.appendChild(span); txt.appendChild(wrap);
+    });
+  }
+  txt.style.display=p.text?"block":"none";
+  // Reference: either inline like the text, or on its own light plate.
+  // Put the reference above or below the verse, as the theme asks.
+  if(ST.refPosition==="above"){ if(body.firstChild!==ref) body.insertBefore(ref,txt); }
+  else { if(body.lastChild!==ref) body.appendChild(ref); }
+  const refSpan=ref.querySelector(".ln");
+  if(p.reference && ST.showRef!==false){
+    refSpan.textContent=p.reference;
+    if(ST.refSeparate){
+      refSpan.setAttribute("style","background:"+(ST.refBgColor||"#e9e9e9")+";color:"+(ST.refColor||"#111")+
+        ";font-weight:"+(ST.refBold?"700":"400")+";padding:"+(ST.barPadding||0.4)+"em "+((ST.barPadding||0.4)*1.8)+"em;");
+      ref.style.textAlign = ST.refAlign || "right";
+      // Line the plate up with the TEXT edge, not the frame edge: the text bar
+      // has its own inner padding, so without this the reference looks offset.
+      const inset = (ST.bars && ST.barMode === "block" && ST.barFullWidth)
+        ? ((ST.barPadding || 0.4) * 1.6) + "em" : "0";
+      ref.style.paddingLeft = inset; ref.style.paddingRight = inset;
+      ref.style.marginTop = ST.refPosition==="above" ? "0" : ".55vh";
+      ref.style.marginBottom = ST.refPosition==="above" ? ".5vh" : "0";
+    } else {
+      refSpan.setAttribute("style",barCss);
+      ref.style.textAlign = ST.align || "center";
+      ref.style.paddingLeft = "0"; ref.style.paddingRight = "0";
+    }
+    ref.style.display="block";
+  } else ref.style.display="none";
+}
+function show(p){
+  const dur=Math.max(0,Number(p.transitionMs??300));
+  layers.forEach(l=>l.style.setProperty("--trans",dur+"ms"));
+  const next=layers[1-active];
+  render(next,p);
+  next.classList.add("visible");
+  layers[active].classList.remove("visible");
+  active=1-active;
+}
+const es=new EventSource("/events");
+es.addEventListener("style",e=>{STYLES=JSON.parse(e.data);applyPageBg();if(lastPayload)show(lastPayload);});
+es.addEventListener("slide",e=>{const p=JSON.parse(e.data);lastPayload=p;show(p);});
+es.addEventListener("clear",()=>{lastPayload=null;if(BG)BG.clear();layers.forEach(l=>{l.classList.remove("visible");[l.querySelector(".fullv")].forEach(v=>{if(!v)return;v.pause();if(v.src){v.removeAttribute("src");v.load();}});});});
+es.onerror=()=>{};
+applyPageBg();
+</script></body></html>

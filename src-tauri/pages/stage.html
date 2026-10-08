@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stage Display</title>
+<style>
+  * { box-sizing: border-box; }
+  html,body { margin:0; height:100%; background:#000; color:#fff; overflow:hidden;
+    font-family: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif; }
+
+  /* Three bands, as on a standard confidence monitor: what is up now, what is
+     next, and the time. Sizes are in vh so it fills any screen the team has. */
+  #grid { height:100%; display:grid; grid-template-rows: 1fr 1fr auto; }
+
+  .band { display:flex; align-items:center; justify-content:center; padding:2vh 3vw;
+          min-height:0; overflow:hidden; text-align:center; }
+  #bandCur  { border-bottom:1px solid rgba(255,255,255,.22); }
+  #bandNext { border-bottom:1px solid rgba(255,255,255,.22); }
+
+  /* Current slide is the one thing that must be readable from the back of a
+     platform, so it gets the accent colour and the most room. */
+  #curText  { color:#ffe400; font-size:calc(9vh * var(--scale,1)); font-weight:500;
+              line-height:1.18; white-space:pre-wrap; }
+  #nextText { color:#fff; font-size:calc(6vh * var(--scale,1)); font-weight:400;
+              line-height:1.25; white-space:pre-wrap; opacity:.92; }
+
+  #bandBottom { display:grid; grid-template-columns:1fr 1px 1fr; align-items:center;
+                height:22vh; }
+  #bandBottom .sep { background:rgba(255,255,255,.22); height:100%; }
+  #clock, #timer { font-size:calc(12vh * var(--scale,1)); font-weight:400; text-align:center;
+                   font-variant-numeric:tabular-nums; letter-spacing:.01em; }
+  #timer.warn { color:#f9d477; } #timer.over { color:#f38ba8; }
+
+  #ref { position:fixed; top:1.4vh; right:1.6vw; font-size:2.4vh; opacity:.55; }
+
+  /* Layout variants keep the same three bands, just hiding what is not wanted. */
+  body.layout-current   #bandNext,
+  body.layout-current   #bandBottom { display:none; }
+  body.layout-current-clock #bandNext { display:none; }
+  body.noclock #clock, body.noclock #clockCell { visibility:hidden; }
+  body.notimer #timer { visibility:hidden; }
+</style></head>
+<body class="layout-current-next">
+<div id="grid">
+  <div class="band" id="bandCur"><div id="curText"></div></div>
+  <div class="band" id="bandNext"><div id="nextText"></div></div>
+  <div id="bandBottom">
+    <div id="clockCell"><div id="clock">--:--</div></div>
+    <div class="sep"></div>
+    <div><div id="timer">0:00</div></div>
+  </div>
+</div>
+<div id="ref"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const pad = (n) => String(n).padStart(2, "0");
+
+function tickClock() {
+  const d = new Date();
+  let h = d.getHours(), ampm = "";
+  if (window.__stage12h) { ampm = h >= 12 ? " PM" : " AM"; h = h % 12 || 12; }
+  $("clock").textContent = h + ":" + pad(d.getMinutes()) + ampm;
+}
+tickClock(); setInterval(tickClock, 5000);
+
+// Service timer: counts up from the moment kept by the app (shared by every
+// device, reset with the Reset button).
+let started = Date.now();
+function tickTimer() {
+  const s = Math.floor((Date.now() - started) / 1000);
+  $("timer").textContent = Math.floor(s / 60) + ":" + pad(s % 60);
+}
+tickTimer(); setInterval(tickTimer, 1000);
+
+function applyStage(cfg) {
+  if (!cfg) return;
+  document.body.className = "layout-" + (cfg.layout || "current-next")
+    + (cfg.clock === false ? " noclock" : "")
+    + (cfg.timer === false ? " notimer" : "");
+  document.documentElement.style.setProperty("--scale", cfg.scale || 1);
+  window.__stage12h = !!cfg.ampm;
+  tickClock();
+}
+function applySlide(p) {
+  $("curText").textContent  = (p && p.text) || "";
+  $("nextText").textContent = (p && p.nextText) || "";
+  $("ref").textContent      = (p && p.reference) || "";
+}
+
+const es = new EventSource("/events?role=stage");
+es.addEventListener("stage", (e) => { try { const c = JSON.parse(e.data); if (typeof c.timerElapsedMs === "number") started = Date.now() - c.timerElapsedMs; applyStage(c); } catch (err) {} });
+es.addEventListener("stageSlide", (e) => { try { applySlide(JSON.parse(e.data)); } catch (err) {} });
+es.addEventListener("stageClear", () => {
+  // Room screen went black. Clear the current line but keep "next" visible —
+  // the band still needs to know what is coming.
+  $("curText").textContent = "";
+  $("ref").textContent = "";
+});
+es.onerror = () => {};
+</script></body></html>

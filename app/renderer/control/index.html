@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8" />
+<title>Bible Presenter — Control</title>
+<link rel="stylesheet" href="../vendor/inter/inter.css" />
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <img id="appLogo" src="../assets/logo.png" alt="" />
+  <span id="appName">Bible Presenter</span>
+  <div class="nav-tabs">
+    <button class="nav-tab active" data-view="bibleView"><svg viewBox="0 0 24 24" class="ic"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H18a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H6.5A1.5 1.5 0 0 0 5 20.5V4.5Z"/><path d="M5 17.5h13"/><path d="M12 7v6M9.5 9.5h5"/></svg>Біблія</button>
+    <button class="nav-tab" data-view="songsView"><svg viewBox="0 0 24 24" class="ic"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>Пісні</button>
+    <button class="nav-tab" data-view="presView"><svg viewBox="0 0 24 24" class="ic"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M12 16v4M8.5 20h7"/><path d="M7.5 12V9M12 12V7.5M16.5 12v-2"/></svg>Презентації</button>
+    <button class="nav-tab" data-view="annView"><svg viewBox="0 0 24 24" class="ic"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.6"/><path d="M4 16.5l4.5-4 3.5 3 3-2.5 5 4.5"/></svg>Медіа</button>
+  </div>
+  <div id="topbar-right">
+    <select id="translationSelect" data-no-i18n title="Переклад Біблії"></select>
+    <button class="topbtn" id="btnSettings" title="Налаштування"><svg viewBox="0 0 24 24" class="ic ic-sm"><rect x="3.2" y="3.8" width="17.6" height="12.4" rx="2.2"/><path d="M12 16.2v3.6M8.6 20.2h6.8M6.8 8.2h5.9M15.7 8.2h1.5M6.8 11.8h1.3M11.1 11.8h6.1"/><circle cx="14.2" cy="8.2" r="1.5"/><circle cx="9.6" cy="11.8" r="1.5"/></svg></button>
+    <button class="topbtn" id="btnOpenRemote" title="Телефон як пульт"><svg viewBox="0 0 24 24" class="ic ic-sm"><rect x="6.8" y="2.8" width="10.4" height="18.4" rx="2.2"/><path d="M10.6 18h2.8"/></svg> Пульт<span class="topBtnDot" id="remoteDot"></span></button>
+    <button class="topbtn" id="btnOpenWebcast" title="Трансляція"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M3.5 16a4 4 0 0 1 4 4M3.5 12a8 8 0 0 1 8 8"/><rect x="9" y="4" width="11.5" height="9" rx="1.5"/></svg> Трансляція</button>
+    <button class="topbtn primary" id="btnOpenThemes" title="Теми"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.9 1.4-1.9-.5-1.2.4-2.4 1.7-2.4h1.6A3.8 3.8 0 0 0 20.5 12 8.5 8.5 0 0 0 12 3.5Z"/><circle cx="8" cy="10" r="1.1"/><circle cx="12" cy="8" r="1.1"/></svg> Теми</button>
+  </div>
+</div>
+
+<!-- BODY -->
+<div id="body">
+  <!-- LEFT SIDEBAR (context-sensitive) -->
+  <div id="sidebar">
+    <div id="sidebarContent">
+      <!-- Bible sidebar -->
+      <!-- The Bible sidebar is gone: book/chapter/verse now live in the main
+           pane as three columns, so nothing is duplicated or hidden. -->
+      <div id="bibleSidebar" style="display:none"></div>
+      <!-- Songs sidebar -->
+      <div id="songsSidebar" style="display:none">
+        <div id="songsListItems" data-no-i18n></div>
+        <div id="songBulkBar">
+          <button class="btn primary" id="btnAddPickedSongs" style="flex:1">+ В плейлист (<span id="pickedCount">0</span>)</button>
+          <button class="btn ghost icon" id="btnClearPicked"><svg viewBox="0 0 24 24" class="ic"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+        </div>
+      </div>
+      <!-- Pres sidebar -->
+      <div id="presSidebar" style="display:none">
+        <div id="presListItems" data-no-i18n></div>
+      </div>
+      <!-- Ann sidebar -->
+      <div id="annSidebar" style="display:none">
+        <div id="annListItems" data-no-i18n></div>
+      </div>
+    </div>
+    <div id="sidebarActions">
+      <!-- Bible actions -->
+      <!-- Bible needs no sidebar actions: the browse pane carries everything. -->
+      <div id="bibleSidebarActions" style="display:none"></div>
+      <!-- Songs actions -->
+      <div id="songsSidebarActions" style="display:none">
+        <button class="btn primary block" id="btnNewSong"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 5.5v13M5.5 12h13"/></svg> Нова пісня</button>
+        <button class="btn block" id="btnPasteSong"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4 6.5h16M4 12h16M4 17.5h10"/></svg> Вставити текст</button>
+        <button class="btn ghost block" id="btnAddSongToPlaylist"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 5.5v13M5.5 12h13"/></svg> В плейлист</button>
+        <details class="more"><summary>Імпорт / експорт…</summary><div class="moreBody">
+          <button class="btn block" id="btnImportProLibrary"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M5 4.5h4v15H5zM11 4.5h4v15h-4z"/><path d="M17.5 5.5l2.5 14"/></svg> Імпорт бібліотеки ProPresenter</button>
+          <button class="btn block" id="btnImportPro"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg> Імпорт .pro</button>
+          <button class="btn block" id="btnImportSongFile"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg> Імпорт пісні (JSON)</button>
+          <button class="btn block" id="btnExportSongFile"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 20V9M7.5 13.5 12 9l4.5 4.5M5 4.5h14"/></svg> Експортувати цю пісню</button>
+        </div></details>
+      </div>
+      <!-- Pres actions -->
+      <div id="presSidebarActions" style="display:none">
+        <button class="btn primary block" id="btnImportPptx"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg> Імпорт .pptx / .pdf</button>
+      </div>
+      <!-- Ann actions -->
+      <div id="annSidebarActions" style="display:none">
+        <button class="btn primary block" id="btnImportImages"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 5.5v13M5.5 12h13"/></svg> Новий набір медіа</button>
+        <button class="btn block" id="btnAddToSet"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 5.5v13M5.5 12h13"/></svg> Додати в поточний набір</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN AREA -->
+  <div id="mainArea">
+    <!-- BIBLE VIEW -->
+    <div id="bibleView" class="view active">
+      <!-- Browse pane: book → chapter → verse, all three visible at once so the
+           operator never loses their place while hunting a reference. -->
+      <div id="bibleBrowse">
+        <div id="bibleSearchBar">
+          <input id="refSearch" type="text" placeholder="Івана 3:16 або фраза з вірша" />
+          <button class="btn" id="btnRefGo"><svg viewBox="0 0 24 24" class="ic ic-sm"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg> Знайти</button>
+          <button class="btn" id="btnOpenBibleStore" title="Завантажити переклад"><svg viewBox="0 0 24 24" class="ic ic-sm"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></svg> Переклади</button>
+          <button class="btn" id="btnImportBibleXml" title="Імпорт з файлу (XML)"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg> XML</button>
+        </div>
+        <div id="bibleCols">
+          <div class="bibleCol">
+            <div class="bibleColHead">Книга</div>
+            <input id="bookSearch2" type="text" placeholder="Фільтр книг" />
+            <div id="bookList" data-no-i18n></div>
+          </div>
+          <div class="bibleCol" style="flex:0 0 96px">
+            <div class="bibleColHead">Глава</div>
+            <div id="chapterList" data-no-i18n></div>
+          </div>
+          <div class="bibleCol" style="flex:2">
+            <div class="bibleColHead">Вірш</div>
+            <div id="verseList" data-no-i18n></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="biblePreview">
+        <div id="previewCaption">Попередній перегляд екрана</div>
+        <div id="bibleCanvas">
+          <div id="pvBg" aria-hidden="true"></div>
+          <div data-no-i18n id="previewText">Оберіть вірш…</div>
+        </div>
+        <div id="bibleActions">
+          <button class="btn primary" id="btnShowBig"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M7 5.5 18.5 12 7 18.5z"/></svg> Показати на екран</button>
+          <button class="btn danger" id="btnClear"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M7 7l10 10M17 7 7 17"/></svg> Очистити</button>
+          <button class="btn ghost" id="btnAddBibleToPlaylist2"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 5.5v13M5.5 12h13"/></svg> В плейлист</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SONGS VIEW -->
+    <div id="songsView" class="view">
+      <div class="editorMain">
+        <input id="songTitleInput" placeholder="Назва пісні" />
+        <select data-no-i18n id="songCollectionSelect">
+          <option value="">— Без збірки —</option>
+        </select>
+        <div id="sectionsContainer" data-no-i18n></div>
+        <div id="songLayoutBar">
+          <button class="btn ghost" id="btnAddSection"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 5.5v13M5.5 12h13"/></svg> Секція</button>
+          <span class="songLayoutSep"></span>
+          <label for="songLinesPerSlide">Рядків на слайд:</label>
+          <select id="songLinesPerSlide"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select>
+          <button class="btn ghost" id="btnReflowSong" title="Перерозбити всі частини пісні на слайди заново">Перерозбити</button>
+        </div>
+        <div id="songEditorActions">
+          <button class="btn primary" id="btnSaveSong">Зберегти</button>
+          <button class="btn danger" id="btnDeleteSong">Видалити</button>
+          <span id="songSaveStatus" aria-live="polite"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- PRESENTATIONS VIEW -->
+    <div id="presView" class="view">
+      <div class="editorMain">
+        <div id="loStatus" style="display:none"></div>
+        <div class="editorHead">
+          <h2 id="presTitle" data-no-i18n></h2>
+          <span class="spacer"></span>
+          <button class="btn ghost" id="btnAddPresToPlaylist"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 5.5v13M5.5 12h13"/></svg> В плейлист</button>
+        </div>
+        <div class="slideGrid" id="presSlideGrid" data-no-i18n></div>
+      </div>
+    </div>
+
+    <!-- ANNOUNCEMENTS VIEW -->
+    <div id="annView" class="view">
+      <div class="editorMain">
+        <div class="editorHead">
+          <h2 id="annTitle" data-no-i18n></h2>
+          <span class="spacer"></span>
+          <button class="btn ghost" id="btnAddAnnToPlaylist"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 5.5v13M5.5 12h13"/></svg> В плейлист</button>
+        </div>
+        <div class="slideGrid" id="annSlideGrid" data-no-i18n></div>
+      </div>
+    </div>
+
+    <!-- PLAYLIST STRIP -->
+    <div id="playlistStrip">
+      <div id="stripResizer" title="Потягніть, щоб змінити висоту"></div>
+      <div id="stripFloatBar">
+        <span class="clearLabel">Очистити</span>
+        <div class="segGroup">
+          <button class="segBtn" id="btnClearText" title="Прибрати текст — фон і відео продовжують іти">Текст</button>
+          <button class="segBtn danger" id="globalClear" title="Очистити екран повністю">Екран</button>
+        </div>
+        <button class="segBtn solo" id="btnClearWebcast" title="Очистити тільки трансляцію, не чіпаючи проектор">
+          <span id="streamDot" class="streamDot"></span>Трансляція
+        </button>
+      </div>
+      <div id="playlistHeader">
+        <!-- Two modes share this strip: the service running order, and a quick
+             background picker for live use (same idea as ProPresenter). -->
+        <div id="stripTabs">
+          <button class="stripTab active" id="stripTabPlaylist" title="Плейлист служіння"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4 6.5h16M4 12h16M4 17.5h10"/></svg> Плейлист служіння</button>
+          <button class="stripTab" id="stripTabBackgrounds" title="Фони для пісень"><svg viewBox="0 0 24 24" class="ic ic-sm"><rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M4.5 16.5 9 12.5l3.5 3 3-2.5 4 4"/></svg> Фони для пісень</button>
+        </div>
+        <select data-no-i18n id="playlistSelect"></select>
+        <div id="playlistHeaderBtns">
+          <!-- Live controls sit with the strip so they move when it is resized. -->
+          <div id="slideSizeBar" title="Розмір слайдів">
+            <span class="aSmall">A</span>
+            <input type="range" id="slideSizeSlider" min="120" max="340" step="10" value="180" />
+            <span class="aBig">A</span>
+          </div>
+          <button class="btn icon" id="btnTogglePlaylist" title="Сховати / показати плейлист"><svg viewBox="0 0 24 24" class="ic"><path d="M7 10l5 5 5-5"/></svg></button>
+          <button class="btn" id="btnNewPlaylist"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 5.5v13M5.5 12h13"/></svg> Новий</button>
+          <span style="position:relative">
+            <button class="btn icon" id="btnPlaylistMore" title="Ще…"><svg viewBox="0 0 24 24" class="ic"><circle cx="6" cy="12" r="1.25" fill="currentColor"/><circle cx="12" cy="12" r="1.25" fill="currentColor"/><circle cx="18" cy="12" r="1.25" fill="currentColor"/></svg></button>
+            <div id="playlistMorePop" class="menuPop" style="display:none">
+              <button class="menuItem" id="btnImportPlaylistFile"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg> Імпорт плейлиста (JSON)</button>
+              <button class="menuItem" id="btnExportPlaylistFile"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 20V9M7.5 13.5 12 9l4.5 4.5M5 4.5h14"/></svg> Експортувати цей плейлист</button>
+              <button class="menuItem" id="btnRenamePlaylist"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M15.5 4.5 19.5 8.5 8 20H4v-4z"/><path d="M13.5 6.5 17.5 10.5"/></svg> Перейменувати плейлист</button>
+              <div class="menuSep"></div>
+              <button class="menuItem danger" id="btnDeletePlaylist"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4.5 6.5h15M9.5 6.5V4.5h5v2M6.5 6.5 7.5 20h9l1-13.5M10.5 10v6M13.5 10v6"/></svg> Видалити плейлист</button>
+            </div>
+          </span>
+        </div>
+      </div>
+      <div id="playlistItems" data-no-i18n></div>
+      <div id="backgroundsStrip" data-no-i18n style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<!-- GLOBAL CLEAR — always reachable, no panel to open first -->
+
+<!-- IN-APP PROMPT/CONFIRM DIALOG (native prompt/confirm are disabled in Electron) -->
+<div id="dlgOverlay" class="overlay" style="z-index:300">
+  <div class="dialog" style="width:380px">
+    <div data-no-i18n id="dlgMsg"></div>
+    <input id="dlgInput" type="text" style="display:none" />
+    <select id="dlgSelect" style="display:none"></select>
+    <div class="dlgFoot">
+      <button class="btn ghost" id="dlgCancel">Скасувати</button>
+      <button class="btn primary" id="dlgOk">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- THEME OVERLAY -->
+<div id="bgPickerOverlay" class="overlay" style="z-index:210">
+  <div class="dialog flexcol" style="width:720px">
+    <div class="dlgHead">
+      <h3><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M15.5 4.5 19.5 8.5 8 20H4v-4z"/><path d="M13.5 6.5 17.5 10.5"/></svg> Фони</h3>
+      <button class="btn sm" id="btnAddBackgrounds"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 5.5v13M5.5 12h13"/></svg> Додати фони</button>
+      <button class="btn ghost icon" id="btnCloseBgPicker"><svg viewBox="0 0 24 24" class="ic"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+    </div>
+    <p class="hint">Завантажте кілька фонів один раз — далі обирайте їх для будь-якої теми. Фото та відео з вкладки «Медіа» теж доступні тут автоматично.</p>
+    <div id="bgPickerGrid" data-no-i18n></div>
+  </div>
+</div>
+
+<div id="settingsPop">
+  <label>Мова</label>
+  <select id="langSelect" title="Мова"></select>
+  <label>Перехід між слайдами (наплив): <span id="transMsVal">400</span> мс</label>
+  <input type="range" id="transMsSlider" min="0" max="1500" step="50" value="400" style="width:100%" />
+  <label class="check" style="margin-top:12px"><input type="checkbox" id="transMsNone" /> Без переходу (миттєво)</label>
+  <div id="appInfo" data-no-i18n></div>
+  <button class="btn sm block" id="btnCheckUpdates" style="margin-top:12px"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/></svg> Перевірити оновлення</button>
+  <div id="updateStatus" data-no-i18n></div>
+</div>
+
+<datalist id="sectionTypes">
+  <option value="Куплет 1"></option><option value="Куплет 2"></option><option value="Куплет 3"></option>
+  <option value="Приспів"></option><option value="Брідж"></option><option value="Програш"></option>
+  <option value="Інтро"></option><option value="Аутро"></option><option value="Вступ"></option><option value="Тег"></option>
+</datalist>
+
+<div id="pasteSongOverlay" class="overlay" style="z-index:195">
+  <div class="dialog flexcol" style="width:560px">
+    <div class="dlgHead">
+      <h3><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4 6.5h16M4 12h16M4 17.5h10"/></svg> Вставити текст пісні</h3>
+      <button class="btn ghost icon" id="btnClosePasteSong"><svg viewBox="0 0 24 24" class="ic"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+    </div>
+    <p class="hint">Заголовки частин («1 куплет:», «Приспів:», «Брідж:», «Програш:») розпізнаються автоматично, текст ділиться на слайди.</p>
+    <textarea id="pasteSongText" style="flex:1;min-height:280px" placeholder="1 куплет:&#10;Перший рядок...&#10;Другий рядок...&#10;&#10;Приспів:&#10;..."></textarea>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
+      <label>Рядків на слайд:</label>
+      <select id="pasteLinesPerSlide" style="width:70px"><option>1</option><option selected>2</option><option>3</option><option>4</option></select>
+      <span style="flex:1"></span>
+      <button class="btn primary" id="btnApplyPasteSong">Створити слайди</button>
+    </div>
+  </div>
+</div>
+
+<div id="bibleStoreOverlay" class="overlay" style="z-index:197">
+  <div class="dialog flexcol" style="width:640px">
+    <div class="dlgHead">
+      <h3><svg viewBox="0 0 24 24" class="ic ic-sm"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></svg> Завантажити переклад Біблії</h3>
+      <button class="btn ghost icon" id="btnCloseBibleStore"><svg viewBox="0 0 24 24" class="ic"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+    </div>
+    <p class="hint">
+      Каталог відкритих перекладів (Beblia / Holy-Bible-XML-Format). Оберіть мову, натисніть «Завантажити» — переклад одразу зʼявиться у списку.
+    </p>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input id="bibleStoreSearch" type="text" placeholder="Пошук мови або перекладу…" style="flex:1" />
+      <button class="btn icon" id="btnRefreshCatalog" title="Оновити каталог з інтернету"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"/></svg></button>
+    </div>
+    <div id="bibleStoreCount"></div>
+    <div id="bibleStoreList" data-no-i18n style="flex:1;overflow-y:auto"></div>
+  </div>
+</div>
+
+<div id="remoteOverlay" class="overlay" style="z-index:196">
+  <div class="dialog" style="width:540px;max-width:calc(100vw - 32px)">
+    <div class="dlgHead">
+      <h3><svg viewBox="0 0 24 24" class="ic ic-sm"><rect x="6.8" y="2.8" width="10.4" height="18.4" rx="2.2"/><path d="M10.6 18h2.8"/></svg> Телефон як пульт</h3>
+      <button class="btn ghost icon" id="btnCloseRemote"><svg viewBox="0 0 24 24" class="ic"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+    </div>
+    <p class="hint">Керуйте показом зі смартфона: слайди, пісні, план служіння. Нічого встановлювати не потрібно — пульт відкривається в браузері телефона.</p>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <label>Порт:</label>
+      <input id="remotePort" type="number" min="1" max="65535" value="7780" style="width:96px" />
+      <span style="flex:1"></span>
+      <button class="btn primary" id="btnToggleRemote">Увімкнути</button>
+    </div>
+    <div id="remoteError" data-no-i18n class="err-text" style="display:none;margin-bottom:10px;white-space:pre-line"></div>
+    <div id="remoteInfo" style="display:none">
+      <div style="display:flex;gap:18px;align-items:flex-start">
+        <div id="remoteQr" data-no-i18n></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13.5px;font-weight:600;line-height:1.4;color:var(--text-strong)">Відскануйте QR-код камерою телефона</div>
+          <p class="remoteHint" style="margin-top:6px">Або відкрийте адресу в браузері телефона і введіть PIN-код:</p>
+          <div id="remoteUrl" data-no-i18n class="codebox" style="margin-top:8px"></div>
+          <div id="remoteIpRow" style="display:none;align-items:center;gap:8px;margin-top:8px">
+            <label>Мережа:</label>
+            <select id="remoteIpSel" data-no-i18n style="flex:1;min-width:0"></select>
+          </div>
+          <div class="subhead" style="margin:14px 0 4px">PIN-код</div>
+          <div id="remotePin" data-no-i18n></div>
+        </div>
+      </div>
+      <div id="remotePhones" data-no-i18n class="ok-text" style="margin-top:14px"></div>
+      <p class="remoteHint">Телефон і комп'ютер мають бути в одній мережі Wi-Fi.</p>
+      <p class="remoteHint">Додайте сторінку на головний екран телефона (у Safari — через кнопку «Поділитися», у Chrome — через меню ⋮), і пульт відкриватиметься як звичайна програма.</p>
+      <p class="remoteHint">Якщо адреса комп'ютера в мережі зміниться, відскануйте QR-код ще раз.</p>
+      <div style="display:flex;justify-content:flex-end;margin-top:14px">
+        <button class="btn" id="btnRemoteReset" title="Усі підключені телефони буде відключено, і PIN-код зміниться.">Скинути доступ</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="webcastOverlay" class="overlay" style="z-index:196">
+  <div class="dialog" style="width:520px">
+    <div class="dlgHead">
+      <h3><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M3.5 16a4 4 0 0 1 4 4M3.5 12a8 8 0 0 1 8 8"/><rect x="9" y="4" width="11.5" height="9" rx="1.5"/></svg> Трансляція у vMix / OBS</h3>
+      <button class="btn ghost icon" id="btnCloseWebcast"><svg viewBox="0 0 24 24" class="ic"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+    </div>
+    <p class="hint">
+      Увімкніть сервер — і додайте у vMix вхід Web Browser з адресою нижче. Слайди зʼявлятимуться у трансляції одночасно з проектором.</p>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <label>Порт:</label>
+      <input id="webcastPort" type="number" value="7777" style="width:96px" />
+      <span style="flex:1"></span>
+      <button class="btn primary" id="btnToggleWebcast">Увімкнути</button>
+    </div>
+    <div id="webcastInfo" style="display:none">
+      <div class="subhead">Адреси для vMix</div>
+      <div id="webcastUrls" class="codebox"></div>
+      <p class="hint" style="margin:10px 0 0">
+        Додайте <code>?transparent=1</code> в кінці адреси — фон буде прозорим (для накладання поверх відео).
+      </p>
+      <div id="webcastClients" class="ok-text" style="margin-top:10px"></div>
+
+      <div style="border-top:1px solid var(--hair);margin-top:18px;padding-top:16px">
+        <div class="subhead">Тема трансляції</div>
+        <p class="hint">Окремі теми для пісень і віршів. Презентації та обʼяви йдуть без змін.</p>
+        <div style="display:flex;gap:6px;margin-bottom:14px">
+          <button class="btn primary sm" id="wcTargetSong" style="flex:1"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg> Пісні</button>
+          <button class="btn sm" id="wcTargetBible" style="flex:1"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H18a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H6.5A1.5 1.5 0 0 0 5 20.5V4.5Z"/><path d="M5 17.5h13"/></svg> Вірші</button>
+        </div>
+
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:14px">
+          <select data-no-i18n id="wcThemeSelect" style="flex:1" title="Збережені теми для цього типу"></select>
+          <button class="btn icon" id="wcThemeSave" title="Зберегти як…"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M5 4.5h10.5L19.5 8.5V18a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18V6A1.5 1.5 0 0 1 5 4.5Z"/><path d="M8 4.5v4h6v-4M8 19.5v-5h8v5"/></svg></button>
+          <button class="btn icon" id="wcThemeDelete" title="Видалити збережену тему"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4.5 6.5h15M9.5 6.5V4.5h5v2M6.5 6.5 7.5 20h9l1-13.5M10.5 10v6M13.5 10v6"/></svg></button>
+          <button class="btn icon" id="wcThemeReset" title="Скинути до стандартної теми (чорно-біла)"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4"/></svg></button>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:14px">
+          <button class="btn sm" id="wcThemeImport" style="flex:1"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg> Імпорт теми (JSON)</button>
+          <button class="btn sm" id="wcThemeImportPro" style="flex:1" title="Використати оформлення ProPresenter для титрів"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg> .proTheme</button>
+          <button class="btn sm" id="wcThemeExport" style="flex:1"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 20V9M7.5 13.5 12 9l4.5 4.5M5 4.5h14"/></svg> Експорт теми</button>
+        </div>
+
+        <label class="check" style="margin-bottom:12px">
+          <input type="checkbox" id="wcOwn" checked /> Власна тема (інакше — зменшена тема проектора)
+        </label>
+
+        <details class="grp" open><summary>Текст</summary><div class="grpBody">
+        <div id="wcOwnBlock">
+          <label>Шрифт</label>
+          <div id="wcFontWarn" data-no-i18n style="display:none;font-size:12px;color:var(--yellow);margin:4px 0 6px"></div>
+          <select data-no-i18n id="wcFont" style="width:100%;margin-bottom:10px"></select>
+
+          <label>Розмір: <span id="wcSizeVal">46</span> pt</label>
+          <input type="range" id="wcSize" min="18" max="140" value="46" style="width:100%" />
+
+          <label>Міжлітерний інтервал: <span id="wcSpacingVal">0.00</span></label>
+          <input type="range" id="wcSpacing" min="-5" max="30" value="0" style="width:100%" />
+
+          <label>Міжрядковий інтервал: <span id="wcLineVal">1.25</span></label>
+          <input type="range" id="wcLine" min="80" max="250" value="125" style="width:100%" />
+
+          <div style="display:flex;gap:14px;align-items:center;margin-top:10px;flex-wrap:wrap">
+            <div><label>Колір тексту</label><input type="color" id="wcColor" value="#ffffff" /></div>
+            <label class="check"><input type="checkbox" id="wcBold" checked /> Жирний</label>
+            <label class="check"><input type="checkbox" id="wcUpper" checked /> ВЕЛИКІ</label>
+            <label class="check"><input type="checkbox" id="wcShadow" /> Тінь</label>
+          </div>
+
+          <div id="wcShadowBlock" style="display:none;margin-top:10px">
+            <label>Сила тіні: <span id="wcShadowVal">55</span></label>
+            <input type="range" id="wcShadowStrength" min="0" max="100" value="55" style="width:100%" />
+          </div>
+
+          <div style="display:flex;gap:14px;align-items:center;margin-top:10px;flex-wrap:wrap">
+            <div style="flex:1;min-width:150px">
+              <label>Обведення тексту: <span id="wcOutlineVal">0</span> px</label>
+              <input type="range" id="wcOutlineWidth" min="0" max="8" step="0.5" value="0" style="width:100%" />
+            </div>
+            <div><label>Колір обведення</label><input type="color" id="wcOutlineColor" value="#000000" /></div>
+          </div>
+        </div>
+
+        <div id="wcScaleBlock" style="display:none">
+          <label>Розмір: <span id="wcScaleVal">45</span>% від проекторного</label>
+          <input type="range" id="wcScale" min="15" max="100" step="5" value="45" style="width:100%" />
+        </div>
+
+        </div></details>
+
+        <details class="grp"><summary>Плашка</summary><div class="grpBody">
+        <div>
+          <label class="check">
+            <input type="checkbox" id="wcBars" checked /> Бортики (плашка під кожним рядком)
+          </label>
+          <div id="wcBarsBlock2" style="display:flex;gap:12px;margin-top:10px">
+            <div style="flex:1">
+              <label>Вигляд плашки</label>
+              <select id="wcBarMode" style="width:100%">
+                <option value="perline">Під кожним рядком</option>
+                <option value="block">Одна на весь текст</option>
+              </select>
+            </div>
+            <div style="flex:1">
+              <label class="check" style="margin-top:18px">
+                <input type="checkbox" id="wcBarFull" /> Плашка на всю ширину
+              </label>
+            </div>
+          </div>
+          <div style="display:flex;gap:12px;margin-top:10px">
+            <div style="flex:1">
+              <label>Вирівнювання</label>
+              <select id="wcAlign" style="width:100%">
+                <option value="center">По центру</option>
+                <option value="left">Ліворуч</option>
+                <option value="right">Праворуч</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex;gap:12px;margin-top:10px">
+            <div style="flex:1">
+              <label>Заокруглення: <span id="wcBarRadiusVal">0</span> px</label>
+              <input type="range" id="wcBarRadius" min="0" max="60" value="0" style="width:100%" />
+            </div>
+            <div style="flex:1">
+              <label>Відступ з боків: <span id="wcBarInsetVal">0</span> vw</label>
+              <input type="range" id="wcBarInset" min="0" max="20" step="0.5" value="0" style="width:100%" />
+            </div>
+          </div>
+          <div id="wcBarsBlock" style="display:flex;gap:14px;align-items:center;margin-top:10px;flex-wrap:wrap">
+            <div><label>Колір</label><input type="color" id="wcBarColor" value="#000000" /></div>
+            <div style="flex:1;min-width:150px">
+              <label>Прозорість: <span id="wcBarOpVal">0.75</span></label>
+              <input type="range" id="wcBarOpacity" min="0" max="100" value="75" style="width:100%" />
+            </div>
+            <div style="flex:1;min-width:150px">
+              <label>Відступ: <span id="wcBarPadVal">0.35</span></label>
+              <input type="range" id="wcBarPadding" min="0" max="100" value="35" style="width:100%" />
+            </div>
+          </div>
+        </div>
+
+        </div></details>
+
+        <details class="grp"><summary>Розташування</summary><div class="grpBody">
+        <div style="display:flex;gap:12px">
+          <div style="flex:1">
+            <label>Розташування</label>
+            <select id="wcPosition" style="width:100%">
+              <option value="bottom">Знизу (титри)</option>
+              <option value="center">По центру</option>
+              <option value="top">Зверху</option>
+            </select>
+          </div>
+          <div style="flex:1">
+            <label>Фон сторінки</label>
+            <select id="wcPageBg" style="width:100%">
+              <option value="transparent">Прозорий (для оверлея)</option>
+              <option value="solid">Суцільний колір</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:12px;margin-top:12px">
+          <div style="flex:1">
+            <label>Зсув вгору/вниз: <span id="wcOffsetYVal">0</span> vh</label>
+            <input type="range" id="wcOffsetY" min="-40" max="40" step="0.5" value="0" style="width:100%" />
+          </div>
+          <div style="flex:1">
+            <label>Зсув вліво/вправо: <span id="wcOffsetXVal">0</span> vw</label>
+            <input type="range" id="wcOffsetX" min="-40" max="40" step="0.5" value="0" style="width:100%" />
+          </div>
+        </div>
+
+        <label class="check" style="margin-top:12px">
+          <input type="checkbox" id="wcJoin" /> Обʼєднувати рядки слайда в один
+        </label>
+        </div></details>
+
+        <details class="grp"><summary>Посилання на вірш</summary><div class="grpBody">
+        <label class="check">
+          <input type="checkbox" id="wcShowRef" checked /> Показувати посилання на вірш
+        </label>
+        <label class="check" style="margin-top:8px">
+          <input type="checkbox" id="wcRefSeparate" /> Посилання окремою світлою плашкою
+        </label>
+        <div id="wcRefBlock" style="display:none;gap:14px;align-items:center;margin-top:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:150px">
+            <label>Позиція посилання</label>
+            <select id="wcRefPosition" style="width:100%">
+              <option value="below">Під текстом</option>
+              <option value="above">Над текстом</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:150px">
+            <label>Розмір посилання: <span id="wcRefSizeVal">0.62</span></label>
+            <input type="range" id="wcRefSize" min="30" max="140" value="62" style="width:100%" />
+          </div>
+          <div><label>Фон плашки</label><input type="color" id="wcRefBg" value="#e9e9e9" /></div>
+          <div><label>Колір тексту</label><input type="color" id="wcRefColor" value="#111111" /></div>
+          <div style="flex:1;min-width:140px">
+            <label>Розташування</label>
+            <select id="wcRefAlign" style="width:100%">
+              <option value="right">Праворуч</option><option value="center">По центру</option><option value="left">Ліворуч</option>
+            </select>
+          </div>
+          <label class="check"><input type="checkbox" id="wcRefBold" checked /> Жирний</label>
+        </div>
+
+        </div></details>
+
+        <details class="grp"><summary>Сценічний екран</summary><div class="grpBody">
+          <p class="hint">Окрема сторінка для музикантів і служителів на сцені: поточний текст, наступний слайд, годинник. Відкрийте адресу нижче на планшеті, телефоні або другому моніторі.</p>
+          <div id="stageUrlBox" data-no-i18n class="codebox" style="margin-bottom:10px">—</div>
+          <label>Вигляд</label>
+          <select id="stageLayout" style="width:100%;margin-bottom:8px">
+            <option value="current-next">Поточний + наступний</option>
+            <option value="current-clock">Поточний + годинник</option>
+            <option value="current">Лише поточний</option>
+          </select>
+          <label class="check">
+            <input type="checkbox" id="stageClock" checked /> Годинник
+          </label>
+          <label class="check" style="margin-top:6px">
+            <input type="checkbox" id="stageTimer" checked /> Таймер служіння
+            <button class="btn sm" id="btnStageTimerReset" type="button" style="margin-left:auto" title="Почати відлік служіння з нуля на всіх пристроях">Скинути</button>
+          </label>
+          <label class="check" style="margin-top:6px">
+            <input type="checkbox" id="stageAmPm" /> 12-годинний формат (AM/PM)
+          </label>
+          <label style="margin-top:10px">Розмір тексту: <span id="stageScaleVal">100</span>%</label>
+          <input type="range" id="stageScale" min="60" max="180" step="5" value="100" style="width:100%" />
+        </div></details>
+
+        <div style="margin-top:14px">
+          <div class="subhead">Перегляд</div>
+          <div id="wcPreview">
+            <div id="wcPreviewText" style="text-align:center"></div>
+          </div>
+        </div>
+      </div>
+</div>
+  </div>
+</div>
+
+<div id="themesManagerOverlay" class="overlay" style="z-index:190">
+  <div class="dialog" style="width:480px">
+    <div class="dlgHead">
+      <h3><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.9 1.4-1.9-.5-1.2.4-2.4 1.7-2.4h1.6A3.8 3.8 0 0 0 20.5 12 8.5 8.5 0 0 0 12 3.5Z"/><circle cx="8" cy="10" r="1.1"/><circle cx="12" cy="8" r="1.1"/></svg> Теми оформлення</h3>
+      <button class="btn ghost icon" id="btnCloseThemes"><svg viewBox="0 0 24 24" class="ic"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+    </div>
+
+    <div style="display:flex;gap:14px;margin-bottom:20px">
+      <div style="flex:1">
+        <label>Активна тема Біблії</label>
+        <select data-no-i18n id="bibleThemeSelect" style="width:100%"></select>
+      </div>
+      <div style="flex:1">
+        <label>Активна тема пісень</label>
+        <select data-no-i18n id="songThemeSelect" style="width:100%"></select>
+      </div>
+    </div>
+
+
+
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+      <span class="subhead" style="flex:1 0 100%;margin:0 0 4px">Усі теми <span style="font-weight:400;color:var(--muted)">— <svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M15.5 4.5 19.5 8.5 8 20H4v-4z"/><path d="M13.5 6.5 17.5 10.5"/></svg> шрифт, розмір, фон (фото/відео)</span></span>
+      <button class="btn sm" id="btnImportThemeFile"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg> Імпорт (JSON)</button>
+      <button class="btn sm" id="btnImportTheme"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg> Імпорт .proTheme</button>
+      <button class="btn primary sm" id="btnNewTheme" style="margin-left:auto"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 5.5v13M5.5 12h13"/></svg> Створити</button>
+    </div>
+    <div id="themesList" data-no-i18n></div>
+  </div>
+</div>
+
+<div id="themeOverlay">
+  <div id="themePanel" class="dialog">
+    <h3 id="themeDlgTitle">Нова тема</h3>
+    <div style="display:flex;gap:20px">
+      <div style="flex:1">
+        <label>Назва теми</label>
+        <input id="te_name" placeholder="Моя тема" />
+
+        <label>Для чого</label>
+        <select id="te_target">
+          <option value="both">Біблія + Пісні</option>
+          <option value="bible">Тільки Біблія</option>
+          <option value="song">Тільки Пісні</option>
+        </select>
+
+        <label>Шрифт</label>
+        <select data-no-i18n id="te_font"></select>
+
+        <label>Розмір (pt): <span id="te_size_val">80</span></label>
+        <input id="te_size" type="range" min="20" max="200" value="80" />
+
+        <label>Міжлітерний інтервал: <span id="te_spacing_val">0</span></label>
+        <input id="te_spacing" type="range" min="-5" max="30" value="0" />
+
+        <label>Міжрядковий інтервал: <span id="te_line_val">1.3</span></label>
+        <input id="te_line" type="range" min="80" max="250" value="130" />
+
+        <label>Відступ між реченнями: <span id="te_linegap_val">0.00</span> em</label>
+        <input id="te_linegap" type="range" min="0" max="150" value="0" />
+
+        <div class="row">
+          <div><label>Колір тексту</label><input id="te_color" type="color" value="#ffffff" /></div>
+          <div><label>Колір фону</label><input id="te_bg" type="color" value="#000000" /></div>
+        </div>
+
+        <label>Фонове зображення / відео</label>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+          <button class="btn sm" id="te_bgPick" style="flex:1"><svg viewBox="0 0 24 24" class="ic ic-sm"><rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M4.5 16.5 9 12.5l3.5 3 3-2.5 4 4"/></svg> Обрати фон з бібліотеки…</button>
+          <button class="btn ghost icon" id="te_bgClear" title="Прибрати фон"><svg viewBox="0 0 24 24" class="ic"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+        </div>
+        <div id="te_bgName" style="font-size:12px;color:var(--muted);margin-bottom:4px">Без фону</div>
+        <label>Заповнення фону</label>
+        <select id="te_bgFit">
+          <option value="cover">Заповнити екран (обрізати)</option>
+          <option value="contain">Вмістити повністю</option>
+        </select>
+
+        <label>Вирівнювання</label>
+        <select id="te_align">
+          <option value="left">Зліва</option>
+          <option value="center" selected>Центр</option>
+          <option value="right">Справа</option>
+        </select>
+
+        <div class="checkRow">
+          <label class="check"><input id="te_upper" type="checkbox" /> ВЕЛИКІ ЛІТЕРИ</label>
+          <label class="check"><input id="te_bold" type="checkbox" /> Жирний</label>
+          <label class="check"><input id="te_shadow" type="checkbox" checked /> Тінь</label>
+        </div>
+      </div>
+
+      <div style="flex:1;display:flex;flex-direction:column">
+        <label>Перегляд</label>
+        <div id="te_preview">
+          <span id="te_preview_text">На початку було Слово</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="themeBtns">
+      <button class="btn primary" id="btnSaveTheme">Зберегти тему</button>
+      <button class="btn ghost" id="btnCancelTheme">Скасувати</button>
+    </div>
+  </div>
+</div>
+
+<script src="../bridge.js"></script>
+<script src="i18n.js"></script>
+<script src="ui.js"></script>
+<script src="script.js"></script>
+</body>
+</html>

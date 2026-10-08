@@ -1,0 +1,21 @@
+{
+  "name": "bible-presenter",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Presentation software for churches: Bible, songs, presentations, media",
+  "license": "ISC",
+  "scripts": {
+    "start": "node scripts/check-rust.js && tauri dev",
+    "build": "node scripts/check-rust.js && tauri build",
+    "dist": "npm run build",
+    "release": "node scripts/release.js",
+    "check": "node scripts/check.js",
+    "test": "node scripts/check.js",
+    "e2e": "node scripts/e2e.js",
+    "icons": "tauri icon build/icon.png -o src-tauri/icons",
+    "prepare": "node scripts/install-hooks.js"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1"
+  }
+}

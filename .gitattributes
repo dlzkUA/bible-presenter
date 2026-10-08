@@ -1,0 +1,7 @@
+# Line endings that must survive a commit from Windows:
+# the git hook and the Mac script are shell scripts (LF), the Windows script is batch (CRLF).
+.githooks/*      text eol=lf
+*.command        text eol=lf
+*.sh             text eol=lf
+*.cmd            text eol=crlf
+*.ps1            text eol=crlf

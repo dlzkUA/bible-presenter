@@ -1,0 +1,82 @@
+[
+ {
+  "file": "00-home.md",
+  "title": "Bible Presenter — User Guide",
+  "icon": "📖"
+ },
+ {
+  "file": "01-installation.md",
+  "title": "Installation and first launch",
+  "icon": "💾"
+ },
+ {
+  "file": "02-interface.md",
+  "title": "The interface",
+  "icon": "🧭"
+ },
+ {
+  "file": "03-bible.md",
+  "title": "Bible",
+  "icon": "✝️"
+ },
+ {
+  "file": "04-songs.md",
+  "title": "Songs",
+  "icon": "🎵"
+ },
+ {
+  "file": "05-presentations.md",
+  "title": "Presentations",
+  "icon": "🖥️"
+ },
+ {
+  "file": "06-media.md",
+  "title": "Media",
+  "icon": "🖼️"
+ },
+ {
+  "file": "07-backgrounds-and-themes.md",
+  "title": "Backgrounds and themes",
+  "icon": "🎨"
+ },
+ {
+  "file": "08-service-playlist.md",
+  "title": "Service playlist",
+  "icon": "📋"
+ },
+ {
+  "file": "09-projector-and-clicker.md",
+  "title": "Projector, clearing and the clicker",
+  "icon": "🕹️"
+ },
+ {
+  "file": "10-live-output.md",
+  "title": "Live output to vMix and OBS",
+  "icon": "📡"
+ },
+ {
+  "file": "11-stage-display.md",
+  "title": "Stage display",
+  "icon": "🎤"
+ },
+ {
+  "file": "12-phone-remote.md",
+  "title": "Phone remote",
+  "icon": "📱"
+ },
+ {
+  "file": "13-keyboard-shortcuts.md",
+  "title": "Keyboard shortcuts",
+  "icon": "⌨️"
+ },
+ {
+  "file": "14-data-backups-and-updates.md",
+  "title": "Data, backups and updates",
+  "icon": "🗂️"
+ },
+ {
+  "file": "15-troubleshooting.md",
+  "title": "Troubleshooting",
+  "icon": "🛠️"
+ }
+]
