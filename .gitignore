@@ -7,9 +7,9 @@ src-tauri/gen/
 dist/
 release/
 
-# The npm lockfile is not used.
-# src-tauri/Cargo.lock IS committed: it pins the Rust libraries.
-package-lock.json
+# Both lockfiles ARE committed: package-lock.json and src-tauri/Cargo.lock pin
+# every library to an exact version and checksum, so a release build can't
+# silently pick up a new (possibly hijacked) version.
 
 # OS noise
 .DS_Store

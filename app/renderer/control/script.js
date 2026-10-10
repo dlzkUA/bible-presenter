@@ -316,7 +316,7 @@ const langSelect = document.getElementById("langSelect");
 function initLang() {
   const saved = localStorage.getItem("uiLang") || "en";   // English by default
   window.i18n.setLang(saved);
-  langSelect.innerHTML = window.i18n.LANGS.map(l => `<option value="${l.id}">${l.label}</option>`).join("");
+  langSelect.innerHTML = window.i18n.LANGS.map(l => `<option value="${esc(l.id)}">${l.label}</option>`).join("");
   langSelect.value = window.i18n.getLang();
   window.i18n.applyI18n();
   window.i18n.observeI18n();
@@ -402,7 +402,7 @@ async function initBible() {
   translationSelect.title = window.i18n.t("Переклад Біблії");
   translations = await window.bibleApi.listTranslations();
   translationSelect.innerHTML = translations.length
-    ? translations.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("")
+    ? translations.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")
     : `<option value="">${esc(window.i18n.t("⬇ Імпорт перекладу (XML)"))}</option>`;
   // Filaret is the default; a previously chosen translation is remembered.
   const remembered = localStorage.getItem("translationId");
@@ -453,7 +453,7 @@ translationSelect.addEventListener("change", () => localStorage.setItem("transla
         const info = await window.bibleApi.download(btn.dataset.dl, window.i18n.getLang(), btn.dataset.lang);
         // Refresh the translation list and switch to what was just downloaded.
         translations = await window.bibleApi.listTranslations();
-        translationSelect.innerHTML = translations.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("");
+        translationSelect.innerHTML = translations.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
         translationSelect.value = info.id;
         currentTranslationId = info.id;
         localStorage.setItem("translationId", info.id);
@@ -498,7 +498,7 @@ document.getElementById("btnImportBibleXml").addEventListener("click", async () 
     const info = await window.bibleApi.importXml(window.i18n.getLang());
     if (!info) return;
     translations = await window.bibleApi.listTranslations();
-    translationSelect.innerHTML = translations.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+    translationSelect.innerHTML = translations.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("");
     translationSelect.value = info.id;
     currentTranslationId = info.id;
     localStorage.setItem("translationId", info.id);
@@ -531,7 +531,7 @@ async function loadBooks() {
 function renderBookList(filter = "") {
   const f = filter.trim().toLowerCase();
   const filtered = f ? books.filter(b => b.name.toLowerCase().includes(f)) : books;
-  bookListEl.innerHTML = filtered.map(b => `<div class="bookItem ${currentBook && b.osis === currentBook.osis ? "active" : ""}" data-osis="${b.osis}">${esc(b.name)}</div>`).join("");
+  bookListEl.innerHTML = filtered.map(b => `<div class="bookItem ${currentBook && b.osis === currentBook.osis ? "active" : ""}" data-osis="${esc(b.osis)}">${esc(b.name)}</div>`).join("");
   bookListEl.querySelectorAll(".bookItem").forEach(el => {
     el.addEventListener("click", () => selectBook(books.find(b => b.osis === el.dataset.osis)));
   });
@@ -915,7 +915,7 @@ async function refreshSongsList() {
   songsListItems.innerHTML = groups.map(([col, items]) => `
     <div class="collectionGroup">
       <div class="collectionHeader">${esc(collectionLabel(col))}</div>
-      ${items.map(s => `<div class="songItem ${currentSong && currentSong.id === s.id ? "active" : ""}" data-id="${s.id}" title="${esc(window.i18n.t("ПКМ — видалити"))}">${esc(s.title)}</div>`).join("")}
+      ${items.map(s => `<div class="songItem ${currentSong && currentSong.id === s.id ? "active" : ""}" data-id="${esc(s.id)}" title="${esc(window.i18n.t("ПКМ — видалити"))}">${esc(s.title)}</div>`).join("")}
     </div>`).join("");
   // Restore the visual state of a multi-selection across re-renders.
   songsListItems.querySelectorAll(".songItem").forEach(el => {
@@ -1281,7 +1281,7 @@ function renderSections() {
       countEl.textContent = `${slides.length} ${window.i18n.t("сл.")}`;
       grid.innerHTML = slides.map((l, li) => {
         const key = `${si}:${li}`;
-        return `<div class="slideCard ${key === liveSongKey ? "live" : ""}" data-si="${si}" data-li="${li}" data-key="${key}">
+        return `<div class="slideCard ${key === liveSongKey ? "live" : ""}" data-si="${si}" data-li="${li}" data-key="${esc(key)}">
           <div class="slideCardThumb"><span class="slideCardText${l ? "" : " blank"}">${l ? esc(l) : esc(window.i18n.t("(порожній екран)"))}</span></div>
           <div class="slideCardFooter"><span class="num">${li+1}</span><span class="lbl">${esc(displaySectionName(sec.name))}</span></div>
         </div>`;
@@ -1944,11 +1944,11 @@ async function refreshPresList(selectId) {
   presListItems.innerHTML = groups.map(([col, items]) => `
     <div class="collectionGroup">
       <div class="collectionHeader">${esc(collectionLabel(col))}</div>
-      ${items.map(p => `<div class="libItem ${currentPresentation?.id === p.id ? "active" : ""}" data-id="${p.id}" title="${esc(window.i18n.t("ПКМ — видалити"))}">
+      ${items.map(p => `<div class="libItem ${currentPresentation?.id === p.id ? "active" : ""}" data-id="${esc(p.id)}" title="${esc(window.i18n.t("ПКМ — видалити"))}">
         <svg viewBox="0 0 24 24" class="ic ic-sm"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M12 16v4M8.5 20h7"/><path d="M7.5 12V9M12 12V7.5M16.5 12v-2"/></svg><span class="libItemTitle">${esc(p.title)}</span>
         <span class="libItemBadge">${p.slideCount}</span>
-        <button class="libItemMove" data-move="${p.id}" data-cur="${esc(p.collection||"")}" title="${esc(window.i18n.t("Змінити збірку"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4 6.5h6l2 2h8v9.5H4z"/></svg></button>
-        <button class="libItemMove" data-del="${p.id}" data-name="${esc(p.title)}" title="${esc(window.i18n.t("Видалити презентацію"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4.5 6.5h15M9.5 6.5V4.5h5v2M6.5 6.5 7.5 20h9l1-13.5M10.5 10v6M13.5 10v6"/></svg></button>
+        <button class="libItemMove" data-move="${esc(p.id)}" data-cur="${esc(p.collection||"")}" title="${esc(window.i18n.t("Змінити збірку"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4 6.5h6l2 2h8v9.5H4z"/></svg></button>
+        <button class="libItemMove" data-del="${esc(p.id)}" data-name="${esc(p.title)}" title="${esc(window.i18n.t("Видалити презентацію"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4.5 6.5h15M9.5 6.5V4.5h5v2M6.5 6.5 7.5 20h9l1-13.5M10.5 10v6M13.5 10v6"/></svg></button>
       </div>`).join("")}
     </div>`).join("");
   presListItems.querySelectorAll(".libItem").forEach(el => {
@@ -2037,7 +2037,7 @@ function describeError(e) {
   if (/PPTX_EMPTY/.test(raw)) return window.i18n.t("У презентації немає слайдів.");
   if (/LIBREOFFICE_MISSING/.test(raw)) return window.i18n.t("LibreOffice не знайдено. Встановіть LibreOffice, щоб імпортувати .pptx, або збережіть презентацію як PDF.");
   if (/LIBREOFFICE_TIMEOUT/.test(raw)) return window.i18n.t("LibreOffice не встиг перетворити файл. Спробуйте ще раз або збережіть презентацію як PDF.");
-  if (/BAD_ID/.test(raw)) return window.i18n.t("Файл пошкоджений або має невідомий формат.");
+  if (/BAD_ID|FILE_TOO_LARGE|TOO_MANY_PAGES/.test(raw)) return window.i18n.t("Файл пошкоджений або має невідомий формат.");
   if (/LIBREOFFICE_NO_PDF/.test(raw)) return window.i18n.t("LibreOffice не зміг перетворити файл.");
   if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|timeout|HTTP \d+|net::ERR/i.test(raw)) return window.i18n.t("Немає зʼєднання з інтернетом або сервер не відповідає.");
   if (/Unexpected token|Unexpected end of JSON|is not valid JSON|JSON\.parse/i.test(raw)) return window.i18n.t("Файл пошкоджений або має невідомий формат.");
@@ -2148,12 +2148,12 @@ async function refreshAnnGallery() {
 
   // Sidebar: list of named sets, click loads that set into the grid
   annListItems.innerHTML = sets.map(s => `
-    <div class="libItem" data-id="${s.id}">
+    <div class="libItem" data-id="${esc(s.id)}">
       <svg viewBox="0 0 24 24" class="ic ic-sm"><rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M4.5 16.5 9 12.5l3.5 3 3-2.5 4 4"/></svg>
       <span class="libItemTitle">${esc(s.title)}</span>
       <span class="libItemBadge">${s.imageCount}</span>
-      <button class="libItemMove" data-ren="${s.id}" data-title="${esc(s.title)}" title="${esc(window.i18n.t("Перейменувати набір"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M15.5 4.5 19.5 8.5 8 20H4v-4z"/><path d="M13.5 6.5 17.5 10.5"/></svg></button>
-      <button class="libItemMove" data-id="${s.id}" title="${esc(window.i18n.t("Видалити набір"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4.5 6.5h15M9.5 6.5V4.5h5v2M6.5 6.5 7.5 20h9l1-13.5M10.5 10v6M13.5 10v6"/></svg></button>
+      <button class="libItemMove" data-ren="${esc(s.id)}" data-title="${esc(s.title)}" title="${esc(window.i18n.t("Перейменувати набір"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M15.5 4.5 19.5 8.5 8 20H4v-4z"/><path d="M13.5 6.5 17.5 10.5"/></svg></button>
+      <button class="libItemMove" data-id="${esc(s.id)}" title="${esc(window.i18n.t("Видалити набір"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4.5 6.5h15M9.5 6.5V4.5h5v2M6.5 6.5 7.5 20h9l1-13.5M10.5 10v6M13.5 10v6"/></svg></button>
     </div>`).join("");
 
   annListItems.querySelectorAll("[data-ren]").forEach(btn => btn.addEventListener("click", async e => {
@@ -2229,7 +2229,7 @@ function renderAnnGrid() {
       <button class="annImgAdd tileBtn add" data-idx="${i}" title="${esc(window.i18n.t("Додати у плейлист служіння"))}"><svg viewBox="0 0 24 24" class="ic"><path d="M12 5.5v13M5.5 12h13"/></svg></button>
       ${isVideoFile(img.file)
         ? `<div class="slideCardThumb mediaThumb">
-             <video src="${toFileUrl(img.path)}" muted playsinline preload="metadata"></video>
+             <video src="${esc(toFileUrl(img.path))}" muted playsinline preload="metadata"></video>
              <span class="tag bl">${esc(window.i18n.t("ВІДЕО"))}</span>
            </div>`
         : `<div class="slideCardThumb mediaThumb" style="background-image:url('${toFileUrl(img.path)}')"></div>`}
@@ -2353,7 +2353,7 @@ async function loadSystemFonts() {
 
 async function refreshThemes(selectBibleId, selectSongId) {
   const themes = await window.themesApi.list();
-  const opts = `<option value="">${esc(window.i18n.t("Без теми"))}</option>` + themes.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+  const opts = `<option value="">${esc(window.i18n.t("Без теми"))}</option>` + themes.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("");
   const prevB = bibleThemeSelect.value, prevS = songThemeSelect.value;
   bibleThemeSelect.innerHTML = opts;
   songThemeSelect.innerHTML = opts;
@@ -2367,12 +2367,12 @@ async function refreshThemes(selectBibleId, selectSongId) {
       listEl.innerHTML = `<p class="emptyNote">${esc(window.i18n.t("Ще немає тем. Створіть або імпортуйте."))}</p>`;
     } else {
       listEl.innerHTML = themes.map(t => `
-        <div class="libItem" data-id="${t.id}">
+        <div class="libItem" data-id="${esc(t.id)}">
           <svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.9 1.4-1.9-.5-1.2.4-2.4 1.7-2.4h1.6A3.8 3.8 0 0 0 20.5 12 8.5 8.5 0 0 0 12 3.5Z"/><circle cx="8" cy="10" r="1.1"/><circle cx="12" cy="8" r="1.1"/></svg>
           <span class="libItemTitle">${esc(t.name)}</span>
-          <button class="libItemMove" data-edit="${t.id}" title="${esc(window.i18n.t("Редагувати тему (шрифт, фон, розмір)"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M15.5 4.5 19.5 8.5 8 20H4v-4z"/><path d="M13.5 6.5 17.5 10.5"/></svg></button>
-          <button class="libItemMove" data-exp="${t.id}" title="${esc(window.i18n.t("Експортувати тему у файл"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 20V9M7.5 13.5 12 9l4.5 4.5M5 4.5h14"/></svg></button>
-          <button class="libItemMove" data-del="${t.id}" data-name="${esc(t.name)}" title="${esc(window.i18n.t("Видалити тему"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4.5 6.5h15M9.5 6.5V4.5h5v2M6.5 6.5 7.5 20h9l1-13.5M10.5 10v6M13.5 10v6"/></svg></button>
+          <button class="libItemMove" data-edit="${esc(t.id)}" title="${esc(window.i18n.t("Редагувати тему (шрифт, фон, розмір)"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M15.5 4.5 19.5 8.5 8 20H4v-4z"/><path d="M13.5 6.5 17.5 10.5"/></svg></button>
+          <button class="libItemMove" data-exp="${esc(t.id)}" title="${esc(window.i18n.t("Експортувати тему у файл"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 20V9M7.5 13.5 12 9l4.5 4.5M5 4.5h14"/></svg></button>
+          <button class="libItemMove" data-del="${esc(t.id)}" data-name="${esc(t.name)}" title="${esc(window.i18n.t("Видалити тему"))}"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M4.5 6.5h15M9.5 6.5V4.5h5v2M6.5 6.5 7.5 20h9l1-13.5M10.5 10v6M13.5 10v6"/></svg></button>
         </div>`).join("");
       listEl.querySelectorAll("[data-edit]").forEach(btn => btn.addEventListener("click", () => openThemeForEdit(btn.dataset.edit)));
       listEl.querySelectorAll("[data-exp]").forEach(btn => btn.addEventListener("click", async (e) => {
@@ -2771,15 +2771,15 @@ function updateThemeEditorPreview() {
       return;
     }
     grid.innerHTML = items.map(i => `
-      <div class="bgItem${teBg.file === i.file ? " picked" : ""}" data-file="${esc(i.file)}" data-type="${i.type}" data-path="${esc(i.path)}">
+      <div class="bgItem${teBg.file === i.file ? " picked" : ""}" data-file="${esc(i.file)}" data-type="${esc(i.type)}" data-path="${esc(i.path)}">
         ${i.type === "video"
-          ? `<video src="${toFileUrl(i.path)}" muted playsinline preload="metadata"></video>
+          ? `<video src="${esc(toFileUrl(i.path))}" muted playsinline preload="metadata"></video>
              <span class="tag tl">${esc(window.i18n.t("ВІДЕО"))}</span>`
           : `<div class="bgFill" style="background-image:url('${toFileUrl(i.path)}')"></div>`}
         ${i.source === "media"
           ? `<span class="tag accent" style="right:34px;top:7px" title="${esc(window.i18n.t("З вкладки Медіа"))}">${esc(window.i18n.t("Медіа"))}</span>`
           : ""}
-        <button class="bgDel tileBtn del" data-del="${esc(i.file)}" data-source="${i.source || "library"}" title="${esc(window.i18n.t("Видалити фон"))}"><svg viewBox="0 0 24 24" class="ic"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
+        <button class="bgDel tileBtn del" data-del="${esc(i.file)}" data-source="${esc(i.source || "library")}" title="${esc(window.i18n.t("Видалити фон"))}"><svg viewBox="0 0 24 24" class="ic"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
         <div class="bgName">${esc(i.file)}</div>
       </div>`).join("");
 
@@ -2930,7 +2930,7 @@ const playlistItemsEl = document.getElementById("playlistItems");
 async function refreshPlaylistSelect(selectId) {
   playlists = await window.playlistsApi.list();
   remoteSync();
-  playlistSelect.innerHTML = `<option value="">${esc(window.i18n.t("— оберіть або створіть —"))}</option>` + playlists.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  playlistSelect.innerHTML = `<option value="">${esc(window.i18n.t("— оберіть або створіть —"))}</option>` + playlists.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
   if (selectId) { playlistSelect.value = selectId; loadPlaylist(selectId); }
   else if (currentPlaylist?.id) playlistSelect.value = currentPlaylist.id;
 }
@@ -3438,9 +3438,9 @@ setInterval(refreshStreamDot, 4000);
     const addCard = `<div class="bgStripNone" id="bgStripAdd"><svg viewBox="0 0 24 24" class="ic ic-sm"><path d="M12 5.5v13M5.5 12h13"/></svg> ${esc(window.i18n.t("Додати"))}</div>`;
     bgEl.innerHTML = noneCard + items.map(i => `
       <div class="bgStripItem${liveBackground && liveBackground.file === i.file ? " active" : ""}"
-           data-file="${esc(i.file)}" data-type="${i.type}" data-path="${esc(i.path)}" title="${esc(i.file)}">
+           data-file="${esc(i.file)}" data-type="${esc(i.type)}" data-path="${esc(i.path)}" title="${esc(i.file)}">
         ${i.type === "video"
-          ? `<video src="${toFileUrl(i.path)}" muted playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover"></video>
+          ? `<video src="${esc(toFileUrl(i.path))}" muted playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover"></video>
              <span class="bgStripTag"><svg viewBox="0 0 24 24" class="ic" style="width:10px;height:10px"><path d="M7 5.5 18.5 12 7 18.5z" fill="currentColor"/></svg></span>`
           : `<div style="width:100%;height:100%;background:url('${toFileUrl(i.path)}') center/cover no-repeat"></div>`}
         <button class="bgStripDel" data-del="${esc(i.file)}" title="${esc(window.i18n.t("Видалити фон"))}"><svg viewBox="0 0 24 24" class="ic"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button>
@@ -3874,7 +3874,7 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
     const all = await window.webcastApi.listThemes();
     const forTarget = all.filter(t => t.target === target);
     themeSel.innerHTML = `<option value="">${esc(window.i18n.t("— без збереженої теми —"))}</option>` +
-      forTarget.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+      forTarget.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("");
     // Restore the previously chosen theme so the panel reopens where it was.
     const want = selectId || localStorage.getItem(selKey()) || "";
     if (want && forTarget.some(t => t.id === want)) themeSel.value = want;

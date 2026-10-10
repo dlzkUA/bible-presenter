@@ -37,7 +37,9 @@ type R = Result<Value, String>;
 fn main() {
     let paths = store::Paths::new();
     let remote_cfg = remote::load_config(&paths);
-    let test_mode = std::env::var_os("BP_TEST").is_some();
+    // Test hooks exist only in development builds: in a released copy an
+    // environment variable must not be able to run scripts inside the app.
+    let test_mode = cfg!(debug_assertions) && std::env::var_os("BP_TEST").is_some();
     let context = tauri::generate_context!();
     let st = Arc::new(AppState::new(paths, context.package_info().version.to_string(), remote_cfg, test_mode));
 
@@ -340,7 +342,12 @@ fn remote_state(st: &AppState, mut patch: Value) {
     if let Some(slides) = patch.get_mut("slides").and_then(|s| s.as_array_mut()) {
         let mut list = Vec::with_capacity(slides.len());
         for s in slides.iter_mut() {
-            let img = s.get("img").and_then(|v| v.as_str()).map(std::path::PathBuf::from).filter(|p| p.is_absolute());
+            // Only pictures from the data folder go to the phone.
+            let img = s
+                .get("img")
+                .and_then(|v| v.as_str())
+                .map(std::path::PathBuf::from)
+                .filter(|p| p.is_absolute() && st.paths.shareable(p));
             let video = s.get("v").and_then(|v| v.as_bool()).unwrap_or(false);
             if let Some(o) = s.as_object_mut() {
                 o.remove("img");

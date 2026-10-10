@@ -122,6 +122,8 @@
       throw new Error("PDF_UNREADABLE: " + ((e && e.message) || e));
     }
     if (!doc.numPages) throw new Error("PDF_EMPTY");
+    // Matches MAX_PAGES in present.rs: a tiny PDF can list one page 100,000 times.
+    if (doc.numPages > 1000) throw new Error("TOO_MANY_PAGES");
     const slides = [];
     try {
       for (let i = 1; i <= doc.numPages; i++) {

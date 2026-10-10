@@ -1,6 +1,6 @@
 {
   "name": "bible-presenter",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "private": true,
   "description": "Presentation software for churches: Bible, songs, presentations, media",
   "license": "ISC",
@@ -16,6 +16,7 @@
     "prepare": "node scripts/install-hooks.js"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.1"
-  }
+    "@tauri-apps/cli": "2.12.1"
+  },
+  "repository": "github:dlzkUA/bible-presenter"
 }

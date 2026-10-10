@@ -1,8 +1,11 @@
 // Runs before "npm start" / "npm run build": version 3 is compiled from Rust,
 // so say clearly what is missing instead of a cryptic "cargo not found".
 const { spawnSync } = require("child_process");
+const os = require("os");
+const path = require("path");
+process.env.PATH = path.join(os.homedir(), ".cargo", "bin") + path.delimiter + process.env.PATH;
 
-const r = spawnSync("cargo", ["--version"], { encoding: "utf8", shell: process.platform === "win32" });
+const r = spawnSync("cargo", ["--version"], { encoding: "utf8" });
 if (r.status === 0) process.exit(0);
 
 const lines = [

@@ -58,7 +58,7 @@ fn slide_text(cue: &Value) -> String {
 /// One .pro file → { title, sections: [{ name, slides }] }, in the order the
 /// song is sung (its arrangement), so a repeated chorus is not lost.
 pub fn import_pro_file(path: &Path) -> Result<Value, String> {
-    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    let bytes = crate::store::read_limited(path, crate::store::MAX_JSON)?;
     let obj = decode("rv.data.Presentation", &bytes)?;
     let mut cues: HashMap<String, Value> = HashMap::new();
     for c in arr(&obj, "cues") {
@@ -128,7 +128,9 @@ pub fn import_pro_theme(path: &Path) -> Result<Value, String> {
     let mut buf = Vec::new();
     {
         use std::io::Read;
-        zip.by_name(&name).map_err(|e| e.to_string())?.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+        // A theme document is a few KB; the cap stops a "zip bomb" from
+        // filling memory.
+        zip.by_name(&name).map_err(|e| e.to_string())?.take(32 << 20).read_to_end(&mut buf).map_err(|e| e.to_string())?;
     }
     let obj = decode("rv.data.Template.Document", &buf)?;
     let slide = arr(&obj, "slides").into_iter().next().ok_or("PROTHEME_INVALID: no slides")?;
@@ -276,14 +278,19 @@ fn import_library(app: &AppHandle, st: &AppState) -> R {
     let Some(root) = dialogs::pick_folder(app, &st.t("Оберіть теку бібліотеки ProPresenter")) else { return Ok(Value::Null) };
     let root_name = basename(&root.to_string_lossy());
     let mut files: Vec<(PathBuf, String)> = Vec::new();
-    fn walk(dir: &Path, root_name: &str, out: &mut Vec<(PathBuf, String)>) {
+    // Links and shortcuts to folders are not followed and the depth is
+    // capped: a folder that links back to itself would otherwise never end.
+    fn walk(dir: &Path, root_name: &str, out: &mut Vec<(PathBuf, String)>, depth: u32) {
+        if depth > 24 {
+            return;
+        }
         let Ok(rd) = fs::read_dir(dir) else { return };
         let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
         entries.sort_by_key(|e| e.file_name());
         for e in entries {
             let path = e.path();
-            if path.is_dir() {
-                walk(&path, root_name, out);
+            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                walk(&path, root_name, out, depth + 1);
             } else if path.extension().map(|x| x.to_string_lossy().eq_ignore_ascii_case("pro")).unwrap_or(false) {
                 let parent = path.parent().map(|d| basename(&d.to_string_lossy())).unwrap_or_default();
                 let coll = if parent == root_name { root_name.to_string() } else { parent };
@@ -291,7 +298,7 @@ fn import_library(app: &AppHandle, st: &AppState) -> R {
             }
         }
     }
-    walk(&root, &root_name, &mut files);
+    walk(&root, &root_name, &mut files, 0);
     let mut have = library::library_fingerprints(p);
     let (mut ok, mut failed, mut skipped) = (0, 0, 0);
     let mut seen: Vec<String> = Vec::new();

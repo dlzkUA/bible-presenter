@@ -31,8 +31,17 @@ pub struct Paths {
 }
 
 impl Paths {
+    /// Pictures and videos the app shows live in these two folders. Only
+    /// files there are ever offered to the network (live output, phone
+    /// previews) — never the settings or the phone key next to them.
+    pub fn shareable(&self, p: &Path) -> bool {
+        inside(&self.media, p) || inside(&self.backgrounds, p)
+    }
+
     pub fn new() -> Paths {
+        // Another data folder only in development builds (the end-to-end test).
         let base = std::env::var_os("BP_DATA_DIR")
+            .filter(|_| cfg!(debug_assertions))
             .map(PathBuf::from)
             .unwrap_or_else(|| dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("BiblePresenter"));
         Paths::at(base)
@@ -73,9 +82,20 @@ pub fn safe_id(id: &str) -> Result<&str, String> {
         && id.chars().count() <= 160
         && id != "."
         && id != ".."
-        && id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-');
+        && id.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
+        && !reserved_name(id);
     // JavaScript's \w is ASCII-only; keep the same rule.
     if ok && id.is_ascii() { Ok(id) } else { Err("BAD_ID".into()) }
+}
+
+/// Windows treats these names as devices, not files ("nul.json" writes to
+/// nowhere, "com1" opens a serial port), with or without an extension.
+pub fn reserved_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_lowercase();
+    matches!(stem.as_str(), "con" | "prn" | "aux" | "nul" | "conin$" | "conout$")
+        || ((stem.starts_with("com") || stem.starts_with("lpt"))
+            && stem.len() == 4
+            && stem.as_bytes()[3].is_ascii_digit())
 }
 
 pub fn is_safe_id(id: &str) -> bool {
@@ -91,15 +111,50 @@ pub fn json_path(dir: &Path, id: &str) -> Result<PathBuf, String> {
 pub fn write_json_atomic<T: Serialize + ?Sized>(fp: &Path, data: &T, pretty: bool) -> Result<(), String> {
     let text = if pretty { serde_json::to_string_pretty(data) } else { serde_json::to_string(data) }
         .map_err(|e| e.to_string())?;
+    // Saves can overlap (two quick playlist edits run on two threads). Each
+    // gets its own temp file, and the write-and-rename runs one at a time, so
+    // two saves can never mix into one broken file.
+    static WRITING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
     let mut tmp = fp.as_os_str().to_owned();
-    tmp.push(".tmp");
+    tmp.push(format!(".{}.tmp", random_hex(6)));
     let tmp = PathBuf::from(tmp);
-    {
-        let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
-        f.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    let _one_at_a_time = WRITING.lock();
+    let written = (|| {
+        let mut f = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        f.write_all(text.as_bytes())?;
         let _ = f.sync_all();
+        drop(f);
+        fs::rename(&tmp, fp)
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
     }
-    fs::rename(&tmp, fp).map_err(|e| e.to_string())
+    written.map_err(|e| e.to_string())
+}
+
+/// Size limits for files that come from elsewhere. Real songs, playlists and
+/// themes are a few KB, a Bible XML a few MB; a bigger file is a mistake or an
+/// attack and would otherwise be read whole into memory.
+pub const MAX_JSON: u64 = 64 << 20;
+pub const MAX_XML: u64 = 300 << 20;
+pub const MAX_PDF: u64 = 1 << 30;
+
+pub fn read_limited(fp: &Path, max: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let f = fs::File::open(fp).map_err(|e| e.to_string())?;
+    if f.metadata().map(|m| m.len()).unwrap_or(0) > max {
+        return Err("FILE_TOO_LARGE".into());
+    }
+    let mut buf = Vec::new();
+    f.take(max + 1).read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    if buf.len() as u64 > max {
+        return Err("FILE_TOO_LARGE".into());
+    }
+    Ok(buf)
+}
+
+pub fn read_text_limited(fp: &Path, max: u64) -> Result<String, String> {
+    String::from_utf8(read_limited(fp, max)?).map_err(|e| e.to_string())
 }
 
 /// Writes a user-chosen export file (pretty JSON, no atomic rename needed).
@@ -252,8 +307,29 @@ pub fn extname(name: &str) -> String {
 }
 
 /// Last path component, accepting both separators.
+/// The last part of a path, safe to join onto one of our own folders. Imported
+/// files carry names from other computers, and on Windows a name like
+/// "D:secret.txt" joined onto a folder replaces the folder with drive D:, so a
+/// drive colon splits too. "." and ".." come back empty.
 pub fn basename(p: &str) -> String {
-    p.rsplit(['/', '\\']).next().unwrap_or(p).to_string()
+    let b = p.rsplit(['/', '\\', ':']).next().unwrap_or(p);
+    if b == "." || b == ".." { String::new() } else { b.to_string() }
+}
+
+/// True when `p` is a file or folder inside `root` once links, ".." and the
+/// like are resolved. Used before anything is shown to the network.
+pub fn inside(root: &Path, p: &Path) -> bool {
+    // Compared as text first, before touching the disk: resolving a network
+    // path (\\server\share\…) would make Windows connect to that server and
+    // hand it the user's login. A path that doesn't even start with the
+    // folder is turned away without being looked up.
+    if !p.starts_with(root) {
+        return false;
+    }
+    match (root.canonicalize(), p.canonicalize()) {
+        (Ok(r), Ok(f)) => f.starts_with(r),
+        _ => false,
+    }
 }
 
 /// File name without its extension.
@@ -285,8 +361,13 @@ mod tests {
     #[test]
     fn ids_cannot_leave_the_data_folder() {
         assert!(is_safe_id("amazing-grace-mabc1"));
-        for bad in ["../x", "..", "a/b", "a\\b", "пісня", ""] {
+        for bad in ["../x", "..", "a/b", "a\\b", "пісня", "", "D:x.jpg", "nul", "CON.json", "com1.png"] {
             assert!(!is_safe_id(bad), "{bad}");
         }
+        // File names from imported files: only the last part, never a drive
+        // ("D:x" joined onto a folder means drive D: on Windows) or "..".
+        assert_eq!(basename("C:\\Users\\a\\pic.jpg"), "pic.jpg");
+        assert_eq!(basename("D:secret.xlsx"), "secret.xlsx");
+        assert_eq!(basename("/x/.."), "");
     }
 }

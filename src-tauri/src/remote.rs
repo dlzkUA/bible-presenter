@@ -43,6 +43,10 @@ struct Fail {
     since: Instant,
 }
 
+/// Wrong PINs allowed per PIN (see `pin_fails_total`). One in a million per
+/// guess, so 50 tries leave about a 1-in-20,000 chance.
+const PIN_TRIES: u32 = 50;
+
 struct Inner {
     running: Option<Running>,
     clients: Vec<Client>,
@@ -53,6 +57,10 @@ struct Inner {
     fails: HashMap<String, Fail>,
     recent_fails: Vec<Instant>,
     pair_locked_until: Option<Instant>,
+    /// Wrong PINs since this PIN was made. Past PIN_TRIES the PIN stops
+    /// working until the operator presses "Reset access" (the QR code still
+    /// works), so slow guessing over days can't get through either.
+    pin_fails_total: u32,
     slide_files: Vec<Option<PathBuf>>,
     thumbs: HashMap<String, Arc<Vec<u8>>>,
     thumb_order: Vec<String>,
@@ -77,6 +85,7 @@ impl Default for Remote {
             fails: HashMap::new(),
             recent_fails: vec![],
             pair_locked_until: None,
+            pin_fails_total: 0,
             slide_files: vec![],
             thumbs: HashMap::new(),
             thumb_order: vec![],
@@ -90,13 +99,14 @@ impl Default for Remote {
 
 pub fn new_key() -> String {
     let mut b = [0u8; 24];
-    let _ = getrandom::fill(&mut b);
+    // A key made from zeros would let anyone in; never carry on without randomness.
+    getrandom::fill(&mut b).expect("the system's random number source failed");
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b)
 }
 
 pub fn new_pin() -> String {
     let mut b = [0u8; 4];
-    let _ = getrandom::fill(&mut b);
+    getrandom::fill(&mut b).expect("the system's random number source failed");
     format!("{:06}", u32::from_le_bytes(b) % 1_000_000)
 }
 
@@ -231,6 +241,7 @@ impl Remote {
         i.fails.clear();
         i.recent_fails.clear();
         i.pair_locked_until = None;
+        i.pin_fails_total = 0;
         // Phones holding the old key are dropped and come back to the PIN screen.
         i.clients.clear();
     }
@@ -270,6 +281,7 @@ impl Remote {
             .route("/thumb/{n}", get(thumb))
             .route("/cover/{id}", get(cover))
             .fallback(|| async { sse::text(StatusCode::NOT_FOUND, "text/plain; charset=utf-8", "not found") })
+            .layer(axum::middleware::from_fn(sse::guard_host))
             .with_state(self.clone())
             .into_make_service_with_connect_info::<SocketAddr>();
         let running = sse::serve_connect_info(port, router)?;
@@ -369,12 +381,36 @@ async fn manifest(State(r): State<Remote>) -> Response<Body> {
     res
 }
 
-async fn pair(State(r): State<Remote>, ConnectInfo(addr): ConnectInfo<SocketAddr>, body: Bytes) -> Response<Body> {
+/// A web page on another site can send a plain POST to this address from any
+/// browser on the network (to burn PIN tries). Only the phone page's own
+/// JSON request is accepted: a cross-site page can't send that without the
+/// browser asking first, and this server never says yes.
+fn same_site_json(headers: &HeaderMap) -> bool {
+    let json = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim_start().to_ascii_lowercase().starts_with("application/json"))
+        .unwrap_or(false);
+    // The phone page asks for no referrer, and with that setting browsers
+    // send "Origin: null" even to their own site. The JSON type alone already
+    // makes another site's page ask first, which never succeeds.
+    let origin_ok = match (headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()), headers.get(header::HOST).and_then(|v| v.to_str().ok())) {
+        (None, _) | (Some("null"), _) => true,
+        (Some(o), Some(h)) => o.eq_ignore_ascii_case(&format!("http://{h}")),
+        (Some(_), None) => false,
+    };
+    json && origin_ok
+}
+
+async fn pair(State(r): State<Remote>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, body: Bytes) -> Response<Body> {
+    if !same_site_json(&headers) {
+        return json_res(StatusCode::FORBIDDEN, json!({ "error": "bad" }));
+    }
     let ip = addr.ip().to_canonical().to_string();
     let now = Instant::now();
     let mut i = r.0.lock();
     let locked_ip = i.fails.get(&ip).and_then(|f| f.until).map(|u| now < u).unwrap_or(false);
-    if i.pair_locked_until.map(|u| now < u).unwrap_or(false) || locked_ip {
+    if i.pair_locked_until.map(|u| now < u).unwrap_or(false) || locked_ip || i.pin_fails_total >= PIN_TRIES {
         return json_res(StatusCode::TOO_MANY_REQUESTS, json!({ "error": "wait" }));
     }
     if body.len() > 512 {
@@ -403,6 +439,7 @@ async fn pair(State(r): State<Remote>, ConnectInfo(addr): ConnectInfo<SocketAddr
         entry.until = Some(now + Duration::from_secs(60));
         wait = true;
     }
+    i.pin_fails_total += 1;
     i.recent_fails.retain(|t| now.duration_since(*t) < Duration::from_secs(600));
     i.recent_fails.push(now);
     if i.recent_fails.len() >= 30 {
@@ -443,13 +480,20 @@ async fn command(State(r): State<Remote>, headers: HeaderMap, body: Bytes) -> Re
     json_res(StatusCode::OK, json!({ "ok": true }))
 }
 
-async fn events(State(r): State<Remote>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Response<Body> {
+async fn events(
+    State(r): State<Remote>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response<Body> {
     if !r.authed(&headers, q.get("k").map(|s| s.as_str())) {
         return json_res(StatusCode::UNAUTHORIZED, json!({ "error": "key" }));
     }
     let mut i = r.0.lock();
     let first = vec!["retry: 2000\n\n".to_string(), sse::event("state", &Value::Object(i.state.clone()))];
-    let (client, res) = sse::stream(0, first);
+    let ip = Some(addr.ip().to_canonical());
+    sse::admit(&mut i.clients, ip);
+    let (client, res) = sse::stream(0, ip, first);
     i.clients.push(client);
     res
 }

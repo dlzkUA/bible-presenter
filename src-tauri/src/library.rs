@@ -209,7 +209,7 @@ pub fn handle(app: &AppHandle, st: &AppState, ch: &str, arg: &Value) -> Option<R
         }
         "backgrounds:importPaths" => {
             let mut added = Vec::new();
-            for item in incoming(arg) {
+            for item in incoming(arg, &p.uploads) {
                 if !is_media(&item.name) || !item.path.is_file() {
                     continue;
                 }
@@ -329,9 +329,11 @@ pub fn handle(app: &AppHandle, st: &AppState, ch: &str, arg: &Value) -> Option<R
             json_path(&p.announcements, id).and_then(|fp| {
                 let Some(mut d) = read_json_safe(&fp) else { return Ok(Value::Null) };
                 let Some(imgs) = d.get("images").and_then(|a| a.as_array()).cloned() else { return Ok(Value::Null) };
+                let was_here = imgs.iter().any(|i| i.as_str() == Some(file));
                 let left: Vec<Value> = imgs.into_iter().filter(|i| i.as_str() != Some(file)).collect();
                 d["images"] = json!(left);
-                if !media_used_elsewhere(p, id).contains(file) && !file.is_empty() {
+                // Only a file that belonged to this set is deleted from disk.
+                if was_here && !media_used_elsewhere(p, id).contains(file) && !file.is_empty() {
                     remove_file_quiet(&p.media.join(basename(file)));
                 }
                 if left.is_empty() {
@@ -357,7 +359,7 @@ pub fn handle(app: &AppHandle, st: &AppState, ch: &str, arg: &Value) -> Option<R
             }
         }
         "announcements:importPaths" => {
-            let items: Vec<Incoming> = incoming(arg.get("paths").unwrap_or(&Value::Null))
+            let items: Vec<Incoming> = incoming(arg.get("paths").unwrap_or(&Value::Null), &p.uploads)
                 .into_iter()
                 .filter(|i| is_media(&i.name) && i.path.is_file())
                 .collect();
@@ -457,7 +459,7 @@ fn import_song_files(app: &AppHandle, st: &AppState) -> R {
     let mut failed = Vec::new();
     for fp in files {
         let name = basename(&p2s(&fp));
-        let raw = fs::read_to_string(&fp).ok().and_then(|t| serde_json::from_str::<Value>(strip_bom(&t)).ok());
+        let raw = read_text_limited(&fp, MAX_JSON).ok().and_then(|t| serde_json::from_str::<Value>(strip_bom(&t)).ok());
         // Only files that really carry song sections: a theme or playlist
         // picked by mistake used to become an empty song.
         let ok = raw.as_ref().and_then(|r| r.get("sections")).and_then(|s| s.as_array()).map(|a| {
@@ -509,6 +511,16 @@ fn export_playlist(app: &AppHandle, st: &AppState, id: &str) -> R {
         out[k] = v;
     }
     out["songs"] = Value::Object(songs);
+    // Pictures are named by file only: the full path would carry this
+    // computer's user name into a file that gets shared, and means nothing on
+    // another computer anyway. Import puts them back in the media folder.
+    if let Some(items) = out.get_mut("items").and_then(|a| a.as_array_mut()) {
+        for it in items.iter_mut() {
+            if let Some(img) = it.get("imagePath").and_then(|v| v.as_str()).map(basename) {
+                it["imagePath"] = json!(img);
+            }
+        }
+    }
     write_json_pretty(&fp, &out)?;
     Ok(json!(p2s(&fp)))
 }
@@ -518,9 +530,17 @@ fn import_playlist(app: &AppHandle, st: &AppState) -> R {
     let Some(fp) = dialogs::pick_file(app, &st.t("Імпортувати плейлист (JSON)"), &[("Bible Presenter Playlist", &["json"])]) else {
         return Ok(Value::Null);
     };
-    let text = fs::read_to_string(&fp).map_err(|e| e.to_string())?;
+    let text = read_text_limited(&fp, MAX_JSON)?;
     let raw: Value = serde_json::from_str(strip_bom(&text)).map_err(|e| format!("JSON.parse: {e}"))?;
-    let Some(items) = raw.get("items").and_then(|a| a.as_array()).cloned() else { return Err("WRONG_FILE_KIND".into()) };
+    let Some(mut items) = raw.get("items").and_then(|a| a.as_array()).cloned() else { return Err("WRONG_FILE_KIND".into()) };
+    // A picture is looked up by file name in this computer's media folder,
+    // never at whatever path the file names (it could point anywhere on disk).
+    for it in items.iter_mut() {
+        if let Some(img) = it.get("imagePath").and_then(|v| v.as_str()).map(String::from) {
+            let name = basename(&img);
+            it["imagePath"] = if name.is_empty() { Value::Null } else { json!(p2s(&p.media.join(name))) };
+        }
+    }
     let name = raw.get("name").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(String::from)
         .unwrap_or_else(|| basename(&p2s(&fp)).trim_end_matches(".json").to_string());
     let id = format!("{}-{}", slugify(&name), stamp36());
@@ -634,7 +654,7 @@ fn import_theme(app: &AppHandle, st: &AppState) -> R {
     let Some(fp) = dialogs::pick_file(app, &st.t("Імпортувати тему (JSON)"), &[("Bible Presenter Theme", &["json"])]) else {
         return Ok(Value::Null);
     };
-    let text = fs::read_to_string(&fp).map_err(|e| e.to_string())?;
+    let text = read_text_limited(&fp, MAX_JSON)?;
     let raw: Value = serde_json::from_str(strip_bom(&text)).map_err(|e| format!("JSON.parse: {e}"))?;
     // A song or playlist picked by mistake must not turn into an empty theme.
     let o = raw.as_object();
@@ -653,7 +673,9 @@ fn import_theme(app: &AppHandle, st: &AppState) -> R {
     with_name["name"] = json!(name);
     let mut to_save = theme_fields(&with_name, true);
     let sidecar = str_of(&raw, "bgSidecar");
-    if !sidecar.is_empty() {
+    // Only a picture or video next to the theme file is copied: a theme from
+    // elsewhere could name any file in that folder (a spreadsheet in Downloads).
+    if !sidecar.is_empty() && is_media(sidecar) {
         let sp = fp.parent().map(|d| d.join(basename(sidecar))).unwrap_or_default();
         if sp.exists() {
             let dest = format!("{}-{}{}", slugify(&name), stamp36(), extname(sidecar));
@@ -677,7 +699,7 @@ fn import_stream_theme(app: &AppHandle, st: &AppState) -> R {
     let Some(fp) = dialogs::pick_file(app, &st.t("Імпорт теми трансляції (JSON)"), &[("Bible Presenter Theme", &["json"])]) else {
         return Ok(Value::Null);
     };
-    let text = fs::read_to_string(&fp).map_err(|e| e.to_string())?;
+    let text = read_text_limited(&fp, MAX_JSON)?;
     let raw: Value = serde_json::from_str(strip_bom(&text)).map_err(|e| format!("JSON.parse: {e}"))?;
     let bad = !raw.is_object() || raw.get("sections").map(|v| v.is_array()).unwrap_or(false) || raw.get("items").map(|v| v.is_array()).unwrap_or(false);
     if bad {
@@ -737,7 +759,9 @@ pub struct Incoming {
     pub temp: bool,
 }
 
-pub fn incoming(list: &Value) -> Vec<Incoming> {
+/// `uploads` is the folder where dropped files wait. Only files there may be
+/// moved (and so removed from where they were); anything else is copied.
+pub fn incoming(list: &Value, uploads: &Path) -> Vec<Incoming> {
     list.as_array()
         .cloned()
         .unwrap_or_default()
@@ -747,7 +771,8 @@ pub fn incoming(list: &Value) -> Vec<Incoming> {
             Value::Object(o) => {
                 let path = o.get("path")?.as_str()?.to_string();
                 let name = o.get("name").and_then(|v| v.as_str()).map(String::from).unwrap_or_else(|| basename(&path));
-                Some(Incoming { path: PathBuf::from(path), name, temp: o.get("temp").and_then(|v| v.as_bool()).unwrap_or(false) })
+                let temp = o.get("temp").and_then(|v| v.as_bool()).unwrap_or(false) && inside(uploads, Path::new(&path));
+                Some(Incoming { path: PathBuf::from(path), name, temp })
             }
             _ => None,
         })
@@ -769,7 +794,8 @@ fn place(src: &Path, dest: &Path, temp: bool) -> Result<(), String> {
 fn add_background(p: &Paths, src: &Path, name: &str, temp: bool, n: usize) -> R {
     let ext = extname(name);
     let mut out = format!("{}{}", slugify(&stem(name)), ext);
-    if p.backgrounds.join(&out).exists() {
+    // "Con.jpg" or "NUL.png" would name a Windows device, not a file.
+    if p.backgrounds.join(&out).exists() || reserved_name(&out) {
         out = format!("{}-{}{}{}", slugify(&stem(name)), stamp36(), if n > 0 { n.to_string() } else { String::new() }, ext);
     }
     place(src, &p.backgrounds.join(&out), temp)?;

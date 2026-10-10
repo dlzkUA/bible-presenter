@@ -10,6 +10,8 @@
 const { spawnSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+// Rust lives in ~/.cargo/bin; a window opened from GitHub Desktop or Explorer may not have it on PATH yet.
+process.env.PATH = path.join(require("os").homedir(), ".cargo", "bin") + path.delimiter + process.env.PATH;
 
 const root = path.join(__dirname, "..");
 const win = process.platform === "win32";
@@ -32,7 +34,7 @@ const steps = [
     if (!bad.length) console.log(`JS syntax: ${files.length} files parse.`);
     return bad.length === 0;
   }],
-  ["backend tests", () => spawnSync("cargo", ["test", "--quiet"], { cwd: path.join(root, "src-tauri"), stdio: "inherit", shell: win }).status === 0],
+  ["backend tests", () => spawnSync("cargo", ["test", "--quiet"], { cwd: path.join(root, "src-tauri"), stdio: "inherit" }).status === 0],
   ...(fast ? [] : [["end-to-end", () => spawnSync(process.execPath, [path.join(__dirname, "e2e.js")], { stdio: "inherit" }).status === 0]]),
 ];
 

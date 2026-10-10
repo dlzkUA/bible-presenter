@@ -6,7 +6,7 @@
 use crate::lan::lan_addresses;
 use crate::sse::{self, Client, Running};
 use axum::body::Body;
-use axum::extract::{Path as AxPath, Query, Request, State};
+use axum::extract::{ConnectInfo, Path as AxPath, Query, Request, State};
 use axum::http::{header, HeaderValue, Response, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -62,10 +62,26 @@ impl Default for Webcast {
     }
 }
 
+/// Style values end up in CSS on the live and stage pages. A stream theme
+/// shared by someone else could carry "red; background:url(…)" in a colour, so
+/// text that could break out of one CSS value is dropped.
+fn css_safe(v: &Value) -> bool {
+    match v {
+        Value::String(s) => {
+            let l = s.to_ascii_lowercase();
+            !s.contains([';', '{', '}', '<', '>', '\\']) && !l.contains("url(") && !l.contains("expression(") && !l.contains("@import")
+        }
+        Value::Array(_) | Value::Object(_) => false,
+        _ => true,
+    }
+}
+
 fn merge(base: &mut Value, patch: &Value) {
     if let (Some(b), Some(p)) = (base.as_object_mut(), patch.as_object()) {
         for (k, v) in p {
-            b.insert(k.clone(), v.clone());
+            if css_safe(v) {
+                b.insert(k.clone(), v.clone());
+            }
         }
     }
 }
@@ -186,8 +202,10 @@ impl Webcast {
             .route("/bgstage.js", get(bgstage))
             .route("/media/{name}", get(media))
             .fallback(|| async { sse::text(StatusCode::NOT_FOUND, "text/plain; charset=utf-8", "not found") })
-            .with_state(self.clone());
-        let running = sse::serve(port, router)?;
+            .layer(axum::middleware::from_fn(sse::guard_host))
+            .with_state(self.clone())
+            .into_make_service_with_connect_info::<std::net::SocketAddr>();
+        let running = sse::serve_connect_info(port, router)?;
         let actual = running.port;
         {
             let mut i = self.0.lock();
@@ -224,7 +242,20 @@ impl Webcast {
 
 fn html(body: &'static str) -> Response<Body> {
     let mut r = sse::text(StatusCode::OK, "text/html; charset=utf-8", body);
-    r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    let h = r.headers_mut();
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    // The pages load nothing from outside: a colour value in an imported
+    // stream theme can't make vMix or OBS fetch another site.
+    h.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; \
+             object-src 'none'; base-uri 'none'; form-action 'none'",
+        ),
+    );
+    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    h.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
     r
 }
 async fn page() -> Response<Body> {
@@ -239,7 +270,11 @@ async fn bgstage() -> Response<Body> {
     r
 }
 
-async fn events(State(w): State<Webcast>, Query(q): Query<HashMap<String, String>>) -> Response<Body> {
+async fn events(
+    State(w): State<Webcast>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response<Body> {
     let stage = q.get("role").map(|r| r == "stage").unwrap_or(false);
     let mut i = w.0.lock();
     let mut first = vec!["retry: 2000\n\n".to_string()];
@@ -254,8 +289,10 @@ async fn events(State(w): State<Webcast>, Query(q): Query<HashMap<String, String
             first.push(sse::event("slide", p));
         }
     }
-    let (client, mut res) = sse::stream(if stage { TAG_STAGE } else { TAG_STREAM }, first);
-    res.headers_mut().insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    sse::admit(&mut i.clients, Some(addr.ip().to_canonical()));
+    // No cross-origin header: vMix, OBS and stage tablets load the page from
+    // this same server, and other web sites must not read the stream.
+    let (client, res) = sse::stream(if stage { TAG_STAGE } else { TAG_STREAM }, Some(addr.ip().to_canonical()), first);
     i.clients.push(client);
     res
 }
@@ -272,7 +309,7 @@ async fn media(State(w): State<Webcast>, AxPath(name): AxPath<String>, req: Requ
     match ServeFile::new_with_mime(&path, &mime).oneshot(req).await {
         Ok(r) => {
             let mut r = r.map(Body::new).into_response();
-            r.headers_mut().insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+            r.headers_mut().insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
             r
         }
         Err(_) => sse::text(StatusCode::NOT_FOUND, "text/plain; charset=utf-8", "not found"),

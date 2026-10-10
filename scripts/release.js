@@ -9,7 +9,7 @@
 //
 // Started by build-windows.cmd / build-mac.command; also directly:
 //   node scripts/release.js [--key <file>] [--no-key] [--mac universal|intel|arm] [--skip-build]
-const { spawnSync } = require("child_process");
+const { spawnSync, spawn } = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const os = require("os");
@@ -24,6 +24,10 @@ const mac = platform === "darwin";
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 const flag = (name) => args.includes(name);
+
+// Rust installs itself into ~/.cargo/bin; a program started from Explorer or Finder
+// may not have that on PATH yet (it only sees it after logging out and in).
+process.env.PATH = path.join(os.homedir(), ".cargo", "bin") + path.delimiter + process.env.PATH;
 
 const say = (m = "") => console.log(m);
 const fail = (m) => { console.error("\n✖ " + m + "\n"); process.exit(1); };
@@ -53,20 +57,13 @@ async function main() {
   // ---- tools (npm first: it also turns on the pre-push check for this clone)
   const cliWorks = () => spawnSync(process.execPath, [CLI, "--version"], { stdio: "ignore" }).status === 0;
   if (!cliWorks()) {
-    const r = spawnSync("npm", ["install", "--no-audit", "--no-fund"], { cwd: root, stdio: "inherit", shell: win });
+    const r = spawnSync("npm install --no-audit --no-fund", { cwd: root, stdio: "inherit", shell: true });
     if (r.status !== 0 || !cliWorks()) fail("npm install не удался (нужен интернет). Если повторяется — удалите папку node_modules и запустите снова.");
   } else {
     spawnSync(process.execPath, [path.join(__dirname, "install-hooks.js")], { cwd: root, stdio: "inherit" });
   }
-  const cargo = spawnSync("cargo", ["--version"], { encoding: "utf8", shell: win });
-  if (cargo.status !== 0) {
-    say("\nRust не установлен (нужен один раз).");
-    say(win ? "Откроется https://rustup.rs — скачайте rustup-init.exe, запустите и соглашайтесь со всем (Enter).\nОн сам предложит поставить Visual Studio Build Tools — соглашайтесь."
-            : "Запустите build-mac.command ещё раз: он установит Rust сам.");
-    if (win) spawnSync("cmd", ["/c", "start", "https://rustup.rs"]);
-    fail("После установки закройте это окно и запустите сборку снова.");
-  }
-  const macTarget = { universal: "universal-apple-darwin", intel: "x86_64-apple-darwin", arm: "aarch64-apple-darwin" }[opt("--mac") || "universal"];
+  ensureRust();
+  let macTarget = { universal: "universal-apple-darwin", intel: "x86_64-apple-darwin", arm: "aarch64-apple-darwin" }[opt("--mac") || "universal"];
   if (mac && !macTarget) fail("--mac может быть universal, intel или arm.");
   if (mac && !flag("--skip-build")) {
     const need = macTarget === "universal-apple-darwin" ? ["aarch64-apple-darwin", "x86_64-apple-darwin"] : [macTarget];
@@ -115,23 +112,46 @@ async function main() {
 
   // ---- build
   const buildStart = Date.now();
-  const bundleRoot = path.join(root, "src-tauri", "target", mac ? macTarget : "", "release", "bundle");
+  const LOG = path.join(root, "release", "build-log.txt");
+  const bundleOf = (t) => path.join(root, "src-tauri", "target", mac ? t : "", "release", "bundle");
+  let bundleRoot = bundleOf(macTarget);
   if (!flag("--skip-build")) {
     say("\nСборка. Первый раз — 10–20 минут, потом быстрее. Окно не закрывайте.\n");
-    const buildArgs = [CLI, "build"];
-    if (mac) buildArgs.push("--target", macTarget);
-    if (!key) buildArgs.push("--config", JSON.stringify({ bundle: { createUpdaterArtifacts: false } }));
-    const env = { ...process.env, TAURI_SIGNING_PRIVATE_KEY: key, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: "" };
+    const env = privateBuildEnv({ ...process.env, TAURI_SIGNING_PRIVATE_KEY: key, TAURI_SIGNING_PRIVATE_KEY_PASSWORD: "" });
     if (!key) delete env.TAURI_SIGNING_PRIVATE_KEY;
-    const r = spawnSync(process.execPath, buildArgs, { cwd: root, stdio: "inherit", env });
-    if (r.status !== 0) {
-      fail("Сборка не удалась. Самое частое:\n" +
-        (win ? "  • «link.exe not found» — не установлены Visual Studio Build Tools (переустановите Rust с rustup.rs и согласитесь на них);\n"
-             : "  • «xcrun: error» — не установлены инструменты Xcode: запустите build-mac.command ещё раз;\n" +
-               "  • «Failed running AppleScript» / bundle_dmg — Терминалу запрещено управлять Finder: Системные настройки → Конфиденциальность и безопасность → Автоматизация → Терминал → включите Finder;\n") +
-        "  • нет интернета при первой сборке (скачиваются библиотеки).\nПришлите последние 30 строк из этого окна — разберёмся.");
+    const buildWith = (target) => {
+      const buildArgs = [CLI, "build"];
+      if (mac) buildArgs.push("--target", target);
+      if (!key) buildArgs.push("--config", JSON.stringify({ bundle: { createUpdaterArtifacts: false } }));
+      return runLogged(process.execPath, buildArgs, { cwd: root, env }, LOG);
+    };
+    let status = await buildWith(macTarget);
+    if (status !== 0) {
+      explainFailure(LOG, win);
+      // A universal build compiles the whole program twice (Intel and Apple Silicon); on an older
+      // Mac the second architecture can fail even though the Mac's own one works.
+      if (mac && macTarget === "universal-apple-darwin") {
+        const own = process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+        const label = process.arch === "arm64" ? "Apple Silicon" : "Intel";
+        say("\nМожно собрать версию только для этого Mac (" + label + "). Она работает на таких же Mac;");
+        say("на Mac с другим процессором она пойдёт через эмуляцию, но обновления для них придут позже.");
+        const answer = await ask("Собрать только для этого Mac? Enter — да, n — нет: ");
+        if (answer.toLowerCase() !== "n") {
+          macTarget = own;
+          bundleRoot = bundleOf(macTarget);
+          say("\nСобираю только для " + label + "…\n");
+          status = await buildWith(macTarget);
+          if (status !== 0) explainFailure(LOG, win);
+        }
+      }
+      if (status !== 0) fail("Сборка не удалась. Полный журнал сохранён в файле:\n  " + LOG + "\nПришлите этот файл или фразы с «error» из списка выше.");
     }
   }
+
+  // ---- the program must not carry this computer's user name
+  checkNoPersonalPaths(win
+    ? [path.join(root, "src-tauri", "target", "release", "bible-presenter.exe")]
+    : appBinaries(path.join(bundleRoot, "macos")));
 
   // ---- collect
   const out = path.join(root, "release", tag);
@@ -203,6 +223,154 @@ async function main() {
   openFolder(out);
 }
 
+// Finds out what is wrong with Rust and, where possible, fixes it: a half-finished
+// install (the window was closed before "Rust is installed now") leaves cargo.exe
+// without a toolchain, which looks exactly like "not installed".
+// Compilers write the paths of the source files they compile into the program
+// (for error messages). Rust libraries live in ~/.cargo, so the program would
+// carry the builder's user name, e.g. C:\Users\Ivan Petrenko. For a release the
+// libraries go to a separate folder with no name in its path, and the
+// remaining paths are rewritten to neutral ones.
+function privateBuildEnv(env) {
+  // Code put into this folder would run inside the release build, so only
+  // this account may write there. On Windows, folders at the root of the drive
+  // are writable by every account until their permissions are narrowed.
+  const shared = win ? path.join((process.env.SystemDrive || "C:") + "\\", "BiblePresenter-build") : "/Users/Shared/BiblePresenter-build";
+  const cargoHome = path.join(shared, "cargo");
+  fs.mkdirSync(cargoHome, { recursive: true });
+  if (win) {
+    const who = (process.env.USERDOMAIN ? process.env.USERDOMAIN + "\\" : "") + process.env.USERNAME;
+    // SIDs, not names: "Administrators" is called differently in a Russian Windows.
+    const r = spawnSync("icacls", [shared, "/inheritance:r", "/grant:r", `${who}:(OI)(CI)F`, "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/Q"], { encoding: "utf8" });
+    if (r.status !== 0) {
+      say("Не удалось закрыть папку " + shared + " от других пользователей; библиотеки останутся в обычной папке.");
+      delete env.CARGO_HOME;
+      env.CARGO_ENCODED_RUSTFLAGS = `--remap-path-prefix=${os.homedir()}=~\x1f--remap-path-prefix=${root}=/bible-presenter`;
+      delete env.RUSTFLAGS;
+      return env;
+    }
+  }
+  if (!win) {
+    // /Users/Shared is open to every account: use the folder only if it is ours
+    // and nobody else can write into it.
+    for (const d of [shared, cargoHome]) {
+      const s = fs.statSync(d);
+      if (s.uid !== process.getuid()) fail("Папка " + d + " создана другим пользователем Mac. Удалите её и запустите сборку ещё раз.");
+      fs.chmodSync(d, 0o700);
+    }
+  }
+  env.CARGO_HOME = cargoHome;
+  // Cargo's own list format: one flag per item, so paths with spaces survive.
+  env.CARGO_ENCODED_RUSTFLAGS = [
+    `--remap-path-prefix=${os.homedir()}=~`,
+    `--remap-path-prefix=${root}=/bible-presenter`,
+    `--remap-path-prefix=${cargoHome}=/cargo`,
+  ].join("\x1f");
+  delete env.RUSTFLAGS;
+  // C parts (the TLS library) built on a Mac: the same rewrite for clang.
+  if (mac && !/\s/.test(os.homedir() + root)) {
+    const map = `-ffile-prefix-map=${os.homedir()}=~ -ffile-prefix-map=${root}=/bible-presenter`;
+    env.CFLAGS = ((env.CFLAGS || "") + " " + map).trim();
+    env.CXXFLAGS = ((env.CXXFLAGS || "") + " " + map).trim();
+  }
+  return env;
+}
+
+function appBinaries(dir) {
+  if (!fs.existsSync(dir)) return [];
+  const out = [];
+  for (const app of fs.readdirSync(dir).filter((n) => n.endsWith(".app"))) {
+    const bin = path.join(dir, app, "Contents", "MacOS");
+    if (fs.existsSync(bin)) for (const f of fs.readdirSync(bin)) out.push(path.join(bin, f));
+  }
+  return out;
+}
+
+// Looks inside the built program for this computer's home folder or user name in a
+// path (also the short Windows form like C:\Users\IVANPE~1). Stops the release if found.
+function checkNoPersonalPaths(files) {
+  const user = os.userInfo().username;
+  const needles = new Set([os.homedir(), os.homedir().replace(/\\/g, "/"), `Users\\${user}`, `Users/${user}`]);
+  for (const n of [...needles]) if (n.length < 6) needles.delete(n);
+  const short = /Users\\[A-Z0-9]{1,6}~\d/; // 8.3 short folder names
+  let found = [];
+  for (const f of files) {
+    if (!fs.existsSync(f)) continue;
+    const buf = fs.readFileSync(f);
+    const asText = buf.toString("latin1");
+    const asWide = buf.toString("utf16le");
+    for (const n of needles) {
+      if (asText.includes(n) || asWide.includes(n) || asText.toLowerCase().includes(n.toLowerCase())) found.push(n);
+    }
+    if (win && (short.test(asText) || short.test(asWide))) found.push("C:\\Users\\…~1");
+  }
+  found = [...new Set(found)];
+  if (found.length) {
+    fail("В собранной программе есть путь с именем пользователя этого компьютера (" + found.join(", ") + ").\n" +
+      "Такие файлы загружать нельзя. Пришлите файл release/build-log.txt.");
+  }
+  say("Проверено: в программе нет имени пользователя этого компьютера.");
+}
+
+function ensureRust() {
+  const exe = win ? "cargo.exe" : "cargo";
+  const home = path.join(os.homedir(), ".cargo", "bin", exe);
+  const probe = () => spawnSync(fs.existsSync(home) ? home : "cargo", ["--version"], { encoding: "utf8" });
+  let r = probe();
+  if (r.status === 0) return;
+  if (fs.existsSync(home)) {
+    say("\nRust установлен не до конца (нет набора инструментов). Достраиваю — нужен интернет, 1–3 минуты…\n");
+    spawnSync(path.join(path.dirname(home), win ? "rustup.exe" : "rustup"), ["default", "stable"], { stdio: "inherit" });
+    r = probe();
+    if (r.status === 0) return;
+    fail("Rust найден (" + home + "), но не запускается:\n" + String(r.stderr || r.error || "").trim() +
+      "\n\nПришлите этот текст. Обычно помогает перезагрузка компьютера и повторный запуск.");
+  }
+  say("\nRust не найден: " + home + " нет.");
+  say("Значит, установка не была завершена. В окне rustup нужно:");
+  say("  1. нажать 1 и Enter (стандартная установка);");
+  say("  2. дождаться надписи «Rust is installed now. Great!» и только потом закрывать окно.");
+  say(win ? "Если окно уже закрыто — скачайте rustup-init.exe ещё раз (откроется страница)." : "");
+  if (win) spawnSync("cmd", ["/c", "start", "", "https://rustup.rs"]);
+  fail("Завершите установку Rust и запустите сборку снова.");
+}
+
+// Runs a command, shows its output live and keeps all of it in a log file.
+function runLogged(cmd, args, opts, logFile) {
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  const log = fs.createWriteStream(logFile);
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { ...opts, stdio: ["inherit", "pipe", "pipe"] });
+    child.stdout.on("data", (d) => { process.stdout.write(d); log.write(d); });
+    child.stderr.on("data", (d) => { process.stderr.write(d); log.write(d); });
+    child.on("error", (e) => { log.write(String(e)); });
+    child.on("close", (code) => log.end(() => resolve(code === null ? 1 : code)));
+  });
+}
+
+// The cause of a failed build is a few lines in thousands; show those, not the compiler command lines.
+function explainFailure(logFile, isWin) {
+  let lines = [];
+  try { lines = fs.readFileSync(logFile, "utf8").split(/\r?\n/); } catch (e) {}
+  const hits = [];
+  for (const l of lines) {
+    const t = l.replace(/\x1b\[[0-9;]*m/g, "").trim();
+    if (!t || t.startsWith('"') || t.length > 400) continue;
+    if (/\b(error|fatal|failed|undefined symbol|not found|No such file|cannot find)\b/i.test(t) && !hits.includes(t)) hits.push(t);
+  }
+  say("\n✖ Сборка не удалась. Главные строки с ошибками:");
+  for (const h of hits.slice(0, 14)) say("  " + h.slice(0, 220));
+  if (!hits.length) say("  (понятных строк не нашлось — смотрите журнал)");
+  say("\nСамое частое:");
+  if (isWin) say("  • «link.exe not found» — не установлены Visual Studio Build Tools (запустите rustup-init.exe ещё раз, выберите 1 и согласитесь на них);");
+  else {
+    say("  • «xcrun: error» или ошибки clang / «assembler» — устарели или не установлены инструменты Apple: Системные настройки → Основные → Обновление ПО,");
+    say("    а если там пусто — в Терминале: sudo rm -rf /Library/Developer/CommandLineTools && xcode-select --install");
+    say("  • «Failed running AppleScript» / bundle_dmg — Терминалу запрещено управлять Finder: Системные настройки → Конфиденциальность и безопасность → Автоматизация → Терминал → включите Finder;");
+  }
+  say("  • нет интернета при первой сборке (скачиваются библиотеки).");
+}
+
 function pick(dir, rx) {
   const f = fs.existsSync(dir) ? fs.readdirSync(dir).filter((x) => rx.test(x)).sort().pop() : null;
   if (!f) fail("Не нашёл результат сборки в " + dir);
@@ -219,7 +387,7 @@ function repoFromPackage(pkg) {
   return parseRepo(typeof r === "string" ? r : r && r.url);
 }
 function repoFromGit() {
-  const r = spawnSync("git", ["remote", "get-url", "origin"], { cwd: root, encoding: "utf8", shell: win });
+  const r = spawnSync("git", ["remote", "get-url", "origin"], { cwd: root, encoding: "utf8" });
   return r.status === 0 && /github\.com/i.test(r.stdout) ? parseRepo(r.stdout) : null;
 }
 
@@ -283,4 +451,4 @@ function electronYml(file, assetName, version) {
 }
 
 if (require.main === module) main().catch((e) => fail(e && e.stack || String(e)));
-module.exports = { checkKey, parseRepo, cleanDroppedPath };
+module.exports = { checkKey, parseRepo, cleanDroppedPath, checkNoPersonalPaths };

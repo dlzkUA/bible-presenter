@@ -342,9 +342,13 @@ pub fn url_to_path(u: &str) -> Option<PathBuf> {
 }
 
 /// Files sent to the live output are served under an opaque id; only files
-/// registered here can be fetched, nothing else on disk.
+/// registered here can be fetched, nothing else on disk. Only pictures and
+/// videos from the media and backgrounds folders are registered: a playlist
+/// made elsewhere can name any path, and the live output is open to every
+/// device on the network.
 fn to_media_url(st: &AppState, u: &str) -> String {
     match url_to_path(u) {
+        Some(fp) if !st.paths.shareable(&fp) => "/media/-".to_string(),
         Some(fp) => {
             let mut h = Sha1::new();
             h.update(fp.to_string_lossy().as_bytes());
@@ -352,11 +356,20 @@ fn to_media_url(st: &AppState, u: &str) -> String {
             st.stream_media.lock().insert(id.clone(), fp);
             format!("/media/{id}")
         }
-        None => format!("/media/{}", store::basename(u)),
+        // A bare file name (older saved themes): only from the media folder,
+        // and only once it has actually been sent to the output.
+        None => {
+            let name = store::basename(u);
+            let fp = st.paths.media.join(&name);
+            if store::is_safe_id(&name) && store::inside(&st.paths.media, &fp) {
+                st.stream_media.lock().insert(name.clone(), fp);
+            }
+            format!("/media/{name}")
+        }
     }
 }
 
-fn mirror(st: &AppState, payload: &Value) -> Value {
+pub(crate) fn mirror(st: &AppState, payload: &Value) -> Value {
     let mut p = payload.clone();
     for k in ["image", "video"] {
         if let Some(u) = p.get(k).and_then(|v| v.as_str()).map(String::from) {
@@ -366,23 +379,35 @@ fn mirror(st: &AppState, payload: &Value) -> Value {
     if let Some(u) = p.pointer("/theme/bgUrl").and_then(|v| v.as_str()).map(String::from) {
         p["theme"]["bgUrl"] = json!(to_media_url(st, &u));
     }
+    // The live output is open to the whole network: only what its page draws
+    // goes out. A theme also carries local paths (bgPath holds the Windows
+    // user name), and those stay on this computer.
     if let Some(o) = p.as_object_mut() {
-        o.remove("__seq");
+        o.retain(|k, _| matches!(k.as_str(), "text" | "reference" | "image" | "video" | "kind" | "nextText" | "transitionMs" | "theme"));
+    }
+    if let Some(t) = p.get_mut("theme").and_then(|t| t.as_object_mut()) {
+        t.retain(|k, v| !(k.ends_with("Path") || k.ends_with("File") || looks_like_local_path(v)));
     }
     p
 }
 
+/// "C:\…", "\\server\…", "/Users/…", "file://…": a path on some computer.
+fn looks_like_local_path(v: &Value) -> bool {
+    let Some(s) = v.as_str() else { return false };
+    let b = s.as_bytes();
+    (b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
+        || s.starts_with("\\\\")
+        || s.starts_with("file:")
+        || s.starts_with("asset:")
+        || s.starts_with("//")
+        || ["/Users/", "/home/", "/Volumes/", "/private/", "/var/"].iter().any(|d| s.starts_with(d))
+}
+
 pub fn webcast_start(st: &AppState, arg: &Value) -> R {
     let port = arg.as_u64().filter(|p| *p > 0 && *p < 65536).unwrap_or(7777) as u16;
-    let media = st.paths.media.clone();
+    // Only files the operator has put on the output can be fetched.
     let registry = st.stream_media_handle();
-    let resolver: crate::webcast::MediaResolver = Arc::new(move |name: &str| {
-        if let Some(p) = registry.lock().get(name) {
-            return Some(p.clone());
-        }
-        let legacy = media.join(store::basename(name)); // older links: media folder only
-        legacy.exists().then_some(legacy)
-    });
+    let resolver: crate::webcast::MediaResolver = Arc::new(move |name: &str| registry.lock().get(name).cloned());
     match st.webcast.start(port, resolver) {
         Ok(info) => {
             let projector = st.output.lock().projector.clone();

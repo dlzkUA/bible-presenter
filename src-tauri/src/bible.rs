@@ -365,16 +365,33 @@ pub(crate) fn search(st: &AppState, arg: &Value) -> R {
 }
 
 fn http_get(url: &str) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    // Redirects only to other https addresses, and no more than a Bible's
+    // worth of data: the download is read whole into memory.
+    let https_only = reqwest::redirect::Policy::custom(|a| {
+        if a.url().scheme() != "https" || a.previous().len() > 5 { a.stop() } else { a.follow() }
+    });
     let client = reqwest::blocking::Client::builder()
         .user_agent("BiblePresenter")
         .timeout(std::time::Duration::from_secs(45))
+        .https_only(true)
+        .redirect(https_only)
         .build()
         .map_err(|e| e.to_string())?;
     let res = client.get(url).send().map_err(|e| format!("net::ERR {e}"))?;
     if !res.status().is_success() {
         return Err(format!("HTTP {}", res.status().as_u16()));
     }
-    res.bytes().map(|b| b.to_vec()).map_err(|e| format!("net::ERR {e}"))
+    let max = crate::store::MAX_XML;
+    if res.content_length().unwrap_or(0) > max {
+        return Err("FILE_TOO_LARGE".into());
+    }
+    let mut buf = Vec::new();
+    res.take(max + 1).read_to_end(&mut buf).map_err(|e| format!("net::ERR {e}"))?;
+    if buf.len() as u64 > max {
+        return Err("FILE_TOO_LARGE".into());
+    }
+    Ok(buf)
 }
 
 /// Splits "EnglishKJV1611" the way the catalogue names its files:
@@ -474,8 +491,9 @@ fn download(st: &AppState, arg: &Value) -> R {
     }
     let xml = http_get(&format!("{RAW_BASE}{}", encode_uri_component(&file)))?;
     let tmp = std::env::temp_dir().join(format!(
-        "bp-{}-{}",
+        "bp-{}-{}-{}",
         now_ms(),
+        crate::store::random_hex(6),
         file.chars().map(|c| if c.is_ascii_alphanumeric() || "_.-".contains(c) { c } else { '_' }).collect::<String>()
     ));
     fs::write(&tmp, &xml).map_err(|e| e.to_string())?;
@@ -527,7 +545,15 @@ fn strip_tags(s: &str) -> String {
     RE_WS.replace_all(&s, " ").trim().to_string()
 }
 
+/// No real Bible has more than 150 chapters in a book or 176 verses in a
+/// chapter. A file that claims verse 900000000 would otherwise make the list
+/// that long and run the computer out of memory, so such numbers are skipped.
+const MAX_NUMBER: usize = 1000;
+
 fn put<T: Default + Clone>(v: &mut Vec<T>, idx: usize, val: T) {
+    if idx >= MAX_NUMBER {
+        return;
+    }
     if v.len() <= idx {
         v.resize(idx + 1, T::default());
     }
@@ -610,7 +636,7 @@ fn parse_osis(xml: &str) -> Option<(HashMap<String, Vec<Vec<String>>>, Option<St
             continue;
         }
         let (Ok(c), Ok(v)) = (m[2].parse::<usize>(), m[3].parse::<usize>()) else { continue };
-        if c == 0 || v == 0 {
+        if c == 0 || v == 0 || c > MAX_NUMBER || v > MAX_NUMBER {
             continue;
         }
         found += 1;
@@ -678,7 +704,7 @@ static RE_IS_O: Lazy<Regex> = Lazy::new(|| re(r"<osis\b|<osisText\b"));
 /// `base_name` gives downloads a stable id (the catalogue file name rather
 /// than the temp file the download was saved to).
 pub fn import_bible_xml(xml_path: &Path, canon: &[CanonBook], out_dir: &Path, base_name: Option<&str>) -> R {
-    let bytes = fs::read(xml_path).map_err(|e| e.to_string())?;
+    let bytes = crate::store::read_limited(xml_path, crate::store::MAX_XML)?;
     let xml = String::from_utf8_lossy(&bytes);
     let base = base_name.map(String::from).unwrap_or_else(|| stem(&xml_path.to_string_lossy()));
     let mut books = Map::new();

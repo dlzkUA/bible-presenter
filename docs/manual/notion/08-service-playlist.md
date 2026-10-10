@@ -43,6 +43,8 @@ Every item shows an icon and its type: Bible, Song, Presentation, Media.
 
 - Right-click an item to remove it from the playlist. The song or presentation itself stays in the library.
 
+- The arrow button at the top of the strip hides or shows the playlist, to give the work area more room.
+
 ## Running the service
 
 1. Click the first item. It opens in its own tab, and nothing goes on screen yet.

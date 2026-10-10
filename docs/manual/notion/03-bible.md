@@ -16,6 +16,7 @@ The catalog has 1,048 translations in 244 languages. Downloaded ones show a gree
 
 <details>
 <summary>Importing your own XML file</summary>
+	The round arrow next to the search field refreshes the catalog from the internet, in case new translations have been added.
 	If a translation is not in the catalog, load an XML file with the XML button next to the search field.
 	Supported formats: Beblia, Zefania and OSIS.
 </details>

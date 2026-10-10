@@ -42,6 +42,14 @@ Built locally, uploaded by hand to GitHub Releases (step by step in `docs/RELEAS
 - The updater private key (`*.key`) never goes into the repository, a zip of the project, or a commit. `.gitignore` excludes it; the key is only read from a file the owner points to at build time and passed via `TAURI_SIGNING_PRIVATE_KEY`.
 - Keep the owner's GitHub email private: don't write it into files, commit metadata you create, or package.json.
 
+## Security rules for the network servers and imports
+
+- Both servers (phone remote 7780, live output 7777) are open to the whole Wi-Fi. Every route sits behind `sse::guard_host`; remote routes check the key. Files go out only through `Paths::shareable` (media and backgrounds folders) and opaque ids — never by a path or name from a request.
+- Nothing with a local path or user name goes to the network or into an exported file: `windows::mirror` keeps only the fields the live page draws; playlist export keeps file names only.
+- File names from imported files pass through `store::basename` (drive colons, `..`); ids through `safe_id` (also refuses Windows device names). Imported files are read with `store::read_limited`.
+- Test hooks (`BP_TEST`, `BP_DATA_DIR`) work only in debug builds.
+- `cargo audit` (RustSec) and `npm audit` should report no vulnerabilities before a release.
+
 ## Style
 
 - Comments explain why, in plain English; user-facing text goes through the translation table.

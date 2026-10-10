@@ -67,6 +67,8 @@ Songs and verses are styled separately: switch between them at the top of Live o
 
 Save settings as a theme, or load a ProPresenter theme (.proTheme).
 
+Merge slide lines into one puts all lines of a slide in a single line on the stream. The round arrow next to the saved-theme list resets the style to the default black and white.
+
 ## Clearing the stream
 
 ![Stream cleared]({{IMG}}/32-clear-stream-on.png)

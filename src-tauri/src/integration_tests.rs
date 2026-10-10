@@ -10,7 +10,7 @@ use crate::remote::{self, Remote};
 use crate::state::AppState;
 use crate::store::{read_json_safe, str_of, Paths};
 use crate::webcast::Webcast;
-use crate::{bible, propres};
+use crate::{bible, propres, sse};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::io::BufRead;
@@ -90,6 +90,15 @@ fn bible_import_then_search() {
     let data = read_json_safe(&bibles.join("user-bible-osis.json")).unwrap();
     assert_eq!(data["books"]["Ps"]["chapters"][22][0], "The LORD is my shepherd; I shall not want.");
 
+    // A file claiming verse 900,000,000 is read without building a list that
+    // long (which would run the computer out of memory).
+    let huge = d.0.join("huge.xml");
+    std::fs::write(&huge, r#"<XMLBIBLE><BIBLEBOOK bnumber="1"><CHAPTER cnumber="1"><VERS vnumber="1">In the beginning</VERS><VERS vnumber="900000000">x</VERS></CHAPTER><CHAPTER cnumber="900000000"><VERS vnumber="1">y</VERS></CHAPTER></BIBLEBOOK></XMLBIBLE>"#).unwrap();
+    let h = bible::import_bible_xml(&huge, &canon, &bibles, None).unwrap();
+    let hd = read_json_safe(&bibles.join(format!("{}.json", str_of(&h, "id")))).unwrap();
+    assert_eq!(hd["books"]["Gen"]["chapters"].as_array().unwrap().len(), 1);
+    std::fs::remove_file(bibles.join(format!("{}.json", str_of(&h, "id")))).unwrap();
+
     // Not a Bible: a readable error code, nothing written.
     let err = bible::import_bible_xml(&fixture("not-a-bible.xml"), &canon, &bibles, None).unwrap_err();
     assert!(err.contains("XML_UNRECOGNISED"), "{err}");
@@ -168,7 +177,7 @@ fn phone_remote_pairing_commands_and_state() {
     let c = http();
     let get = |p: &str| c.get(format!("{base}{p}")).send().unwrap();
     let post = |p: &str, body: Value, key: Option<&str>| {
-        let mut q = c.post(format!("{base}{p}")).body(body.to_string());
+        let mut q = c.post(format!("{base}{p}")).header("Content-Type", "application/json").body(body.to_string());
         if let Some(k) = key {
             q = q.header("X-Key", k);
         }
@@ -188,7 +197,18 @@ fn phone_remote_pairing_commands_and_state() {
     assert_eq!(post("/api/cmd", json!({ "cmd": "next" }), Some("wrong-key-wrong-key-wrong-key")).status(), 401);
 
     // The right PIN gives the key.
-    let res = post("/api/pair", json!({ "pin": cfg.pin }), None);
+    // A page on another web site can't pair: its plain-text POST is refused
+    // before the PIN is even looked at (and costs no tries).
+    let cross_site = c.post(format!("{base}/api/pair")).header("Content-Type", "text/plain").body(json!({ "pin": cfg.pin }).to_string()).send().unwrap();
+    assert_eq!(cross_site.status(), 403);
+    // The phone page sends no referrer, so its browser says "Origin: null".
+    let res = c
+        .post(format!("{base}/api/pair"))
+        .header("Content-Type", "application/json")
+        .header("Origin", "null")
+        .body(json!({ "pin": cfg.pin }).to_string())
+        .send()
+        .unwrap();
     assert_eq!(res.status(), 200);
     let key = res.json::<Value>().unwrap()["key"].as_str().unwrap().to_string();
     assert_eq!(key, cfg.key);
@@ -240,7 +260,14 @@ fn phone_remote_wrong_pins_are_slowed_down() {
     let r = Remote::default();
     let port = r.start(0, &remote::new_key(), "123456", Arc::new(|_| {})).unwrap();
     let c = http();
-    let pair = |pin: &str| c.post(format!("http://127.0.0.1:{port}/api/pair")).body(json!({ "pin": pin }).to_string()).send().unwrap().status();
+    let pair = |pin: &str| {
+        c.post(format!("http://127.0.0.1:{port}/api/pair"))
+            .header("Content-Type", "application/json")
+            .body(json!({ "pin": pin }).to_string())
+            .send()
+            .unwrap()
+            .status()
+    };
     for _ in 0..4 {
         assert_eq!(pair("000000"), 401);
     }
@@ -250,6 +277,31 @@ fn phone_remote_wrong_pins_are_slowed_down() {
 }
 
 // ---------------------------------------------------------------- live output (vMix / OBS, stage)
+
+#[test]
+fn live_output_gets_no_local_paths() {
+    let d = TempData::new();
+    let st = AppState::new(d.paths(), "test".into(), remote::load_config(&d.paths()), false);
+    let inside = st.paths.media.join("bg.png");
+    std::fs::copy(fixture("slide.png"), &inside).unwrap();
+    let out = crate::windows::mirror(&st, &json!({
+        "text": "Amazing grace",
+        "image": inside.to_string_lossy(),
+        "theme": { "bgPath": "C:\\Users\\Pastor\\AppData\\Roaming\\BiblePresenter\\backgrounds\\x.mp4", "bgFile": "x.mp4", "fontFamily": "Georgia" },
+        "secretField": "/Users/pastor/notes.txt",
+    }));
+    let text = out.to_string();
+    assert!(!text.contains("Pastor") && !text.contains("pastor") && !text.contains("secretField"), "{text}");
+    assert_eq!(out["theme"]["fontFamily"], "Georgia");
+    assert!(out["image"].as_str().unwrap().starts_with("/media/"));
+    // A file outside the data folder is never offered to the network.
+    let outside = crate::windows::mirror(&st, &json!({ "image": fixture("slide.png").to_string_lossy() }));
+    assert_eq!(outside["image"], "/media/-");
+}
+
+fn full_headers_lack_cors(c: &reqwest::blocking::Client, url: &str) -> bool {
+    !c.get(url).send().unwrap().headers().contains_key("access-control-allow-origin")
+}
 
 #[test]
 fn live_output_streams_slides_and_media() {
@@ -287,6 +339,19 @@ fn live_output_streams_slides_and_media() {
     assert_eq!(part.bytes().unwrap().as_ref(), b"\x89PNG\r\n\x1a\n");
     assert_eq!(c.get(format!("{base}/media/nope")).send().unwrap().status(), 404);
     assert_eq!(c.get(format!("{base}/media/..%2F..%2Fetc%2Fpasswd")).send().unwrap().status(), 404);
+
+    // One device can't take every place: its own oldest stream makes way,
+    // and nobody gets turned away.
+    let extra: Vec<_> = (0..sse::MAX_PER_IP + 2).map(|_| c.get(format!("{base}/events")).send().unwrap()).collect();
+    assert!(extra.iter().all(|r| r.status() == 200));
+
+    // Only this server's own pages may read it: no cross-site header, and a
+    // request naming some other web site's domain (DNS rebinding) is refused.
+    assert!(full_headers_lack_cors(&c, &format!("{base}/media/abc")));
+    let foreign = c.get(format!("{base}/events")).header("Host", "evil.example.com").send().unwrap();
+    assert_eq!(foreign.status(), 403);
+    let by_name = c.get(format!("{base}/")).header("Host", "church-pc:7777").send().unwrap();
+    assert_eq!(by_name.status(), 200, "a bare computer name still works");
 
     // Stopping frees the port.
     w.stop();

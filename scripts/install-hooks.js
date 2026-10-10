@@ -22,6 +22,6 @@ try {
   on = true;
 } catch (e) {}
 // Also through git itself when it is on PATH (covers a clone whose .git/hooks is replaced).
-const r = spawnSync("git", ["config", "core.hooksPath", ".githooks"], { cwd: root, stdio: "ignore", shell: process.platform === "win32" });
+const r = spawnSync("git", ["config", "core.hooksPath", ".githooks"], { cwd: root, stdio: "ignore" });
 if (on || r.status === 0) console.log("Git hook on: the checks run before every push to master.");
 else console.warn("Could not turn on the git hook: pushes to master will not run the checks by themselves. Run \"npm run check\" before pushing.");

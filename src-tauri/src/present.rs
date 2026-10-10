@@ -105,6 +105,32 @@ fn run_soffice(bin: &str, args: &[String], timeout: Duration) -> Result<(), Stri
     }
 }
 
+/// Presentations come from other people. The fresh LibreOffice profile is set
+/// to never run macros and not to follow links to outside files (a link to a
+/// network share would make Windows send the user's login to that server).
+fn lock_down_profile(profile: &Path) {
+    let user = profile.join("user");
+    if fs::create_dir_all(&user).is_err() {
+        return;
+    }
+    let item = |name: &str, value: &str| {
+        format!(r#"<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="{name}" oor:op="fuse"><value>{value}</value></prop></item>"#)
+    };
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+{}
+{}
+{}
+</oor:items>
+"#,
+        item("MacroSecurityLevel", "3"),
+        item("DisableMacrosExecution", "true"),
+        item("BlockUntrustedRefererLinks", "true"),
+    );
+    let _ = fs::write(user.join("registrymodifications.xcu"), xml);
+}
+
 fn prepare(app: &AppHandle, st: &AppState, labels: &Value) -> R {
     let title = labels.get("title").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| st.t("Імпорт презентації (.pptx, .pdf)"));
     let all = labels.get("all").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| st.t("Презентації"));
@@ -129,10 +155,14 @@ pub fn prepare_file(st: &AppState, file: &Path) -> R {
         let out_dir = temp_dir("bp-pptx-")?;
         let profile = temp_dir("bp-loprofile-")?;
         let profile_url = format!("file:///{}", profile.to_string_lossy().replace('\\', "/").trim_start_matches('/'));
+        lock_down_profile(&profile);
         let args = vec![
             format!("-env:UserInstallation={profile_url}"),
             "--headless".into(),
             "--norestore".into(),
+            "--nologo".into(),
+            "--nodefault".into(),
+            "--nolockcheck".into(),
             "--convert-to".into(),
             "pdf".into(),
             "--outdir".into(),
@@ -214,21 +244,29 @@ pub fn handle(app: &AppHandle, st: &AppState, ch: &str, arg: &Value) -> Option<R
 /// The PDF of a job, for pdf.js in the control window.
 pub fn job_pdf(st: &AppState, id: &str) -> Result<Vec<u8>, String> {
     let pdf = st.jobs.lock().get(id).map(|j| j.pdf.clone()).ok_or("PDF_UNREADABLE: job")?;
-    fs::read(pdf).map_err(|e| format!("PDF_UNREADABLE: {e}"))
+    crate::store::read_limited(&pdf, crate::store::MAX_PDF).map_err(|e| format!("PDF_UNREADABLE: {e}"))
 }
 
 /// One drawn page, as PNG, saved into the media folder.
+/// More pages than any service presentation; stops a PDF from filling the disk.
+pub const MAX_PAGES: usize = 1000;
+
 pub fn job_slide(st: &AppState, id: &str, name: &str, png: &[u8]) -> Result<(), String> {
     let ok_name = !name.is_empty()
         && name.len() < 200
         && name.ends_with(".png")
         && name.chars().all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c))
-        && !name.starts_with('.');
+        && !name.starts_with('.')
+        && crate::store::is_safe_id(name);
     if !ok_name || png.len() < 8 || &png[1..4] != b"PNG" {
         return Err("PDF_UNREADABLE: bad page".into());
     }
     let mut jobs = st.jobs.lock();
     let job = jobs.get_mut(id).ok_or("PDF_UNREADABLE: job")?;
+    // A few KB of PDF can repeat one page 100,000 times; each becomes a PNG.
+    if job.written.len() >= MAX_PAGES {
+        return Err("TOO_MANY_PAGES".into());
+    }
     fs::write(st.paths.media.join(name), png).map_err(|e| e.to_string())?;
     job.written.push(name.to_string());
     Ok(())

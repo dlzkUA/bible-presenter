@@ -8,13 +8,15 @@ const { spawnSync, spawn } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+// Rust lives in ~/.cargo/bin; a window opened from GitHub Desktop or Explorer may not have it on PATH yet.
+process.env.PATH = path.join(require("os").homedir(), ".cargo", "bin") + path.delimiter + process.env.PATH;
 
 const root = path.join(__dirname, "..");
 const win = process.platform === "win32";
 const bin = path.join(root, "src-tauri", "target", "debug", win ? "bible-presenter.exe" : "bible-presenter");
 
 if (!process.argv.includes("--no-build")) {
-  const b = spawnSync("cargo", ["build", "--quiet"], { cwd: path.join(root, "src-tauri"), stdio: "inherit", shell: win });
+  const b = spawnSync("cargo", ["build", "--quiet"], { cwd: path.join(root, "src-tauri"), stdio: "inherit" });
   if (b.status !== 0) process.exit(b.status || 1);
 }
 if (!fs.existsSync(bin)) {
