@@ -70,7 +70,7 @@ fn count_pptx_slides(path: &Path) -> Result<usize, String> {
     let f = fs::File::open(path).map_err(|e| e.to_string())?;
     let zip = zip::ZipArchive::new(f).map_err(|_| "PPTX_EMPTY".to_string())?;
     let re = regex::Regex::new(r"^ppt/slides/slide\d+\.xml$").unwrap();
-    Ok(zip.file_names().filter(|n| re.is_match(n)).count())
+    Ok(zip.file_names().filter_map(|n| n.ok()).filter(|n| re.is_match(n)).count())
 }
 
 fn temp_dir(prefix: &str) -> Result<PathBuf, String> {

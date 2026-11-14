@@ -3,7 +3,7 @@
 <style>
   html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent}
   .layer{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
-    justify-content:center;box-sizing:border-box;padding:6vh 8vw;opacity:0;
+    justify-content:center;box-sizing:border-box;padding:6vh 8vw;opacity:0;will-change:opacity;
     transition:opacity var(--trans,300ms) ease;background-size:contain;
     background-repeat:no-repeat;background-position:center}
   .layer.visible{opacity:1}
@@ -15,6 +15,7 @@
   .layer.img{padding:0 !important;justify-content:center !important;background-size:contain}
   .bgv{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;display:none}
   .fullv{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:2;display:none}
+  .fulli{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;z-index:2}
   .body{position:relative;z-index:1;width:100%}
   .txt{max-width:100%;text-align:var(--align,center)}
   .txt .ln{display:inline-block;border-radius:var(--radius,0);color:var(--color,#fff);font-family:var(--font,"Segoe UI",sans-serif);
@@ -32,6 +33,8 @@
 </style></head><body>
 <div id="bgs"></div>
 <script src="/bgstage.js"></script>
+<script src="/link.js"></script>
+<script src="/fontfaces.js"></script>
 <div class="layer" id="a"><video class="bgv" muted loop playsinline></video><video class="fullv" playsinline></video><div class="body"><div class="txt"></div><div class="ref"><span class="ln"></span></div></div></div>
 <div class="layer" id="b"><video class="bgv" muted loop playsinline></video><video class="fullv" playsinline></video><div class="body"><div class="txt"></div><div class="ref"><span class="ln"></span></div></div></div>
 <script>
@@ -45,28 +48,15 @@ function pickStyle(p){
   return (STYLES && STYLES[kind]) || (STYLES && STYLES.song) || {};
 }
 
-// This page is what vMix/OBS actually renders — often on a DIFFERENT computer
-// than the one running Bible Presenter's control panel. A font name resolved
-// against the control PC's font list can still be wrong here, because THIS
-// machine's fonts are what really matters. Canvas-probe locally as the final
-// check: if the named font genuinely isn't renderable here, fall back to the
-// theme's own safe stack instead of leaving Chromium to guess.
-const __fc = document.createElement("canvas").getContext("2d");
-function fontRendersHere(name) {
-  if (!name || !__fc) return false;
-  const probe = "mmmmmmmmmmlli";
-  __fc.font = "72px monospace";
-  const base = __fc.measureText(probe).width;
-  __fc.font = '72px "' + name.replace(/"/g, '\"') + '", monospace';
-  return __fc.measureText(probe).width !== base;
-}
+// This page is what vMix/OBS actually renders — often on a different computer
+// than the one running Bible Presenter, which may not have the font at all.
+// The chosen family comes first from its own files (fontfaces.js), then by
+// name, then the safe fallback.
 function safeFontStack(name, fallback) {
   const clean = String(name || "").split(",")[0].trim().replace(/^["']+|["']+$/g, "");
-  if (clean && fontRendersHere(clean)) return '"' + clean.replace(/"/g, '\"') + '", "' + fallback + '", sans-serif';
-  // Not renderable on THIS machine — skip straight to the safe fallback so the
-  // stream always shows readable text instead of an unpredictable substitute.
-  return '"' + fallback + '", sans-serif';
+  return window.bpFonts.stack(clean, '"' + fallback + '", sans-serif');
 }
+bpFonts.use((family) => fetch("/fonts?family=" + encodeURIComponent(family)).then((r) => r.json()).then((j) => j.faces));
 
 function hexToRgba(hex,a){
   const h=String(hex||"#000").replace("#","");
@@ -93,7 +83,10 @@ function applyPosition(l,st){
   l.style.setProperty("--radius",(st.barRadius||0)+"px");
   l.style.setProperty("--ref-size",String(st.refSize||0.62));
   // A side inset keeps the plate off the frame edges (rounded-card looks).
+  // Taken off again when the look has none: the two layers are reused, and a
+  // song look with an inset used to leave its padding on the next verse.
   if (st.barInset) { l.style.paddingLeft=st.barInset+"vw"; l.style.paddingRight=st.barInset+"vw"; }
+  else { l.style.paddingLeft=""; l.style.paddingRight=""; }
   l.classList.remove("pos-bottom","pos-top");
   if(st.position==="bottom") l.classList.add("pos-bottom");
   else if(st.position==="top") l.classList.add("pos-top");
@@ -103,6 +96,7 @@ function applyTextStyle(l,theme){
   const set=(k,v)=>l.style.setProperty(k,v);
   if(ST.useOwnTheme){
     set("--font", safeFontStack(ST.fontFamily, "Segoe UI"));
+    l.dataset.font=ST.fontFamily||""; l.dataset.bold=ST.bold?"1":"";
     set("--size",((ST.fontSize||46)/1080)*100+"vh");
     set("--color",ST.color||"#fff");
     set("--weight",ST.bold?"700":"400");
@@ -115,6 +109,7 @@ function applyTextStyle(l,theme){
   } else {
     const t=theme||{};
     set("--font", safeFontStack(t.fontFamily, "Segoe UI"));
+    l.dataset.font=t.fontFamily||""; l.dataset.bold=t.bold?"1":"";
     const proj=t.fontSize?(t.fontSize/1080)*100:5.2;
     set("--size",proj*((ST.scale||100)/100)+"vh");
     set("--color",t.color||"#fff");
@@ -134,6 +129,8 @@ function render(l,p){
   const txt=l.querySelector(".txt"), ref=l.querySelector(".ref"), body=l.querySelector(".body");
   const fullv=l.querySelector(".fullv");
   fullv.style.display="none"; if(fullv.src){fullv.pause();fullv.removeAttribute("src");fullv.load();}
+  const oldImg=l.querySelector(".fulli"); if(oldImg) oldImg.remove();
+  l.style.backgroundImage="none";
   // Background lives in one shared stage: it is not reloaded on every slide,
   // only paused under media slides and swapped once a new clip is ready.
   if(p.video||p.image){ if(BG) BG.pause(); }
@@ -145,7 +142,7 @@ function render(l,p){
   body.style.display="";
   // Presentations / announcements: untouched, full frame.
   if(p.image){
-    l.style.backgroundImage='url("'+p.image.replace(/"/g,'\\"')+'")';
+    // The picture itself is added in show(), once it is decoded.
     l.classList.add("img");
     txt.style.display="none"; ref.style.display="none";
     return;
@@ -205,19 +202,41 @@ function render(l,p){
     ref.style.display="block";
   } else ref.style.display="none";
 }
-function show(p){
+let seq=0;
+async function show(p){
+  const my=++seq;
   const dur=Math.max(0,Number(p.transitionMs??300));
   layers.forEach(l=>l.style.setProperty("--trans",dur+"ms"));
   const next=layers[1-active];
   render(next,p);
+  // Pictures and clips fade in only once they can be drawn (bgstage.js).
+  if(p.image||p.video){
+    const img=await slideMediaReady(p.video?"video":"image", p.video||p.image, next.querySelector(".fullv"), p.video?2500:4000);
+    if(my!==seq) return;                   // a newer slide took over meanwhile
+    if(p.image){
+      const el=img||Object.assign(new Image(),{src:p.image});
+      el.className="fulli"; el.alt=""; next.appendChild(el);
+    }
+  }
+  // The words wait for their font (only the first time it is used).
+  if(p.text&&next.dataset.font){
+    await bpFonts.ready(next.dataset.font, !!next.dataset.bold, p.text, 1500);
+    if(my!==seq) return;
+  }
+  const out=layers[active];
   next.classList.add("visible");
-  layers[active].classList.remove("visible");
+  out.classList.remove("visible");
   active=1-active;
+  retireLayer(out, dur, ".fullv", ".fulli");
 }
-const es=new EventSource("/events");
-es.addEventListener("style",e=>{STYLES=JSON.parse(e.data);applyPageBg();if(lastPayload)show(lastPayload);});
-es.addEventListener("slide",e=>{const p=JSON.parse(e.data);lastPayload=p;show(p);});
-es.addEventListener("clear",()=>{lastPayload=null;if(BG)BG.clear();layers.forEach(l=>{l.classList.remove("visible");[l.querySelector(".fullv")].forEach(v=>{if(!v)return;v.pause();if(v.src){v.removeAttribute("src");v.load();}});});});
-es.onerror=()=>{};
+bpLink("", {
+  // A change of look redraws the words at once, without a fade (a slider
+  // being dragged sends many a second). A picture or clip has no look to
+  // change, and redrawing it would start the clip from the beginning.
+  style:(d)=>{STYLES=d;applyPageBg(lastPayload?pickStyle(lastPayload):undefined);
+    if(lastPayload&&!lastPayload.video&&!lastPayload.image)show(Object.assign({},lastPayload,{transitionMs:0}));},
+  slide:(p)=>{lastPayload=p;show(p);},
+  clear:()=>{seq++;lastPayload=null;if(BG)BG.clear();layers.forEach(l=>{l.classList.remove("visible");[l.querySelector(".fullv")].forEach(v=>{if(!v)return;v.pause();if(v.src){v.removeAttribute("src");v.load();}});const im=l.querySelector(".fulli");if(im)im.remove();});},
+});
 applyPageBg();
 </script></body></html>

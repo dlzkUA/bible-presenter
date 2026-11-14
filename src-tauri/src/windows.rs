@@ -51,6 +51,10 @@ pub fn create_control(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     if let Some(js) = crate::migrate::init_script(&st.paths.root) {
         b = b.initialization_script(&js);
     }
+    // After the 2.x migration, so settings saved since then win.
+    if let Some(js) = st.prefs.init_script() {
+        b = b.initialization_script(&js);
+    }
     if st.test_mode {
         if let Ok(lang) = std::env::var("BP_TEST_LANG") {
             b = b.initialization_script(&format!("try{{localStorage.setItem('uiLang',{});}}catch(e){{}}", serde_json::to_string(&lang).unwrap()));
@@ -307,23 +311,7 @@ pub fn resend_to_output(app: &AppHandle, st: &AppState) {
 /// A page link to a local file (asset protocol, file:// or a plain path) →
 /// the path on disk.
 pub fn url_to_path(u: &str) -> Option<PathBuf> {
-    fn decode(s: &str) -> String {
-        let b = s.as_bytes();
-        let mut out = Vec::with_capacity(b.len());
-        let mut i = 0;
-        while i < b.len() {
-            if b[i] == b'%' && i + 2 < b.len() {
-                if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                    out.push(v);
-                    i += 3;
-                    continue;
-                }
-            }
-            out.push(b[i]);
-            i += 1;
-        }
-        String::from_utf8_lossy(&out).to_string()
-    }
+    use crate::localmedia::percent_decode as decode;
     for prefix in ["asset://localhost/", "http://asset.localhost/", "https://asset.localhost/"] {
         if let Some(rest) = u.strip_prefix(prefix) {
             let rest = rest.split(['?', '#']).next().unwrap_or(rest);
@@ -347,13 +335,15 @@ pub fn url_to_path(u: &str) -> Option<PathBuf> {
 /// made elsewhere can name any path, and the live output is open to every
 /// device on the network.
 fn to_media_url(st: &AppState, u: &str) -> String {
-    match url_to_path(u) {
+    let local = st.local_media.lock().as_ref().and_then(|l| crate::localmedia::path_for(&l.base, &st.paths, u));
+    match local.or_else(|| url_to_path(u)) {
         Some(fp) if !st.paths.shareable(&fp) => "/media/-".to_string(),
         Some(fp) => {
             let mut h = Sha1::new();
             h.update(fp.to_string_lossy().as_bytes());
             let id = format!("{}{}", &hex::encode(h.finalize())[..16], store::extname(&fp.to_string_lossy()).to_lowercase());
-            st.stream_media.lock().insert(id.clone(), fp);
+            st.stream_media.lock().insert(id.clone(), fp.clone());
+            crate::webcast::prewarm(fp);
             format!("/media/{id}")
         }
         // A bare file name (older saved themes): only from the media folder,

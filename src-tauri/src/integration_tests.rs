@@ -361,3 +361,317 @@ fn live_output_streams_slides_and_media() {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
+
+#[test]
+fn live_output_restart_does_not_bring_back_an_old_slide() {
+    let w = Webcast::default();
+    let resolver: crate::webcast::MediaResolver = Arc::new(|_: &str| None);
+    w.start(0, resolver.clone()).unwrap();
+    w.broadcast("slide", &json!({ "text": "Old slide" }));
+    w.broadcast_stage(Some(&json!({ "text": "Old slide" })));
+    // Output off (the projector may be cleared meanwhile: nothing is broadcast
+    // while it is off), then on again: a page that connects starts empty.
+    w.stop();
+    let port2 = w.start(0, resolver).unwrap()["port"].as_u64().unwrap();
+    let c = http();
+    let mut feed = std::io::BufReader::new(c.get(format!("http://127.0.0.1:{port2}/events")).send().unwrap());
+    next_event(&mut feed, "style");
+    w.broadcast("slide", &json!({ "text": "New slide" }));
+    assert_eq!(next_event(&mut feed, "slide")["text"], "New slide");
+    let mut stage = std::io::BufReader::new(c.get(format!("http://127.0.0.1:{port2}/events?role=stage")).send().unwrap());
+    next_event(&mut stage, "stage");
+    w.broadcast_stage(Some(&json!({ "text": "New slide" })));
+    assert_eq!(next_event(&mut stage, "stageSlide")["text"], "New slide");
+    w.stop();
+}
+
+/// Opens a WebSocket the way a browser does and returns the HTTP status of the
+/// handshake, plus the open stream when it was accepted.
+fn ws_open(port: u64, path: &str, origin: Option<&str>) -> (u16, Option<std::net::TcpStream>) {
+    use std::io::{Read, Write};
+    let mut s = std::net::TcpStream::connect(("127.0.0.1", port as u16)).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let origin = origin.map(|o| format!("Origin: {o}\r\n")).unwrap_or_default();
+    write!(
+        s,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\
+         Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n{origin}\r\n"
+    )
+    .unwrap();
+    let mut head = Vec::new();
+    let mut b = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        if s.read(&mut b).unwrap() == 0 {
+            break;
+        }
+        head.push(b[0]);
+    }
+    let status = String::from_utf8_lossy(&head).split_whitespace().nth(1).and_then(|x| x.parse().ok()).unwrap_or(0);
+    (status, (status == 101).then_some(s))
+}
+
+/// Reads frames until one carries this event; returns its data.
+fn ws_event(s: &mut std::net::TcpStream, name: &str) -> Value {
+    use std::io::Read;
+    loop {
+        let mut h = [0u8; 2];
+        s.read_exact(&mut h).unwrap();
+        let mut len = (h[1] & 0x7f) as usize;
+        if len == 126 {
+            let mut e = [0u8; 2];
+            s.read_exact(&mut e).unwrap();
+            len = u16::from_be_bytes(e) as usize;
+        } else if len == 127 {
+            let mut e = [0u8; 8];
+            s.read_exact(&mut e).unwrap();
+            len = u64::from_be_bytes(e) as usize;
+        }
+        let mut body = vec![0u8; len];
+        s.read_exact(&mut body).unwrap();
+        if h[0] & 0x0f != 1 {
+            continue; // not a text frame
+        }
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        if v["e"] == name {
+            return v["d"].clone();
+        }
+    }
+}
+
+#[test]
+fn live_output_websocket_and_vmix_file() {
+    let w = Webcast::default();
+    assert!(w.launcher_page().is_none(), "no file while the output is off");
+    let resolver: crate::webcast::MediaResolver = Arc::new(|_: &str| None);
+    let port = w.start(0, resolver).unwrap()["port"].as_u64().unwrap();
+    let c = http();
+    assert_eq!(c.get(format!("http://127.0.0.1:{port}/link.js")).send().unwrap().status(), 200);
+
+    // A page from this server connects and gets the look, then each slide.
+    let own = format!("http://127.0.0.1:{port}");
+    let (st, s) = ws_open(port, "/ws", Some(&own));
+    assert_eq!(st, 101);
+    let mut s = s.unwrap();
+    ws_event(&mut s, "style");
+    w.broadcast("slide", &json!({ "text": "Amazing grace" }));
+    assert_eq!(ws_event(&mut s, "slide")["text"], "Amazing grace");
+
+    // More sockets than a browser's six-connection limit, all served.
+    let many: Vec<_> = (0..10).map(|_| ws_open(port, "/ws", Some(&own))).collect();
+    assert!(many.iter().all(|(st, _)| *st == 101));
+
+    // The stage display gets its own events.
+    let (st, s2) = ws_open(port, "/ws?role=stage", Some(&own));
+    assert_eq!(st, 101);
+    w.broadcast_stage(Some(&json!({ "text": "Line one", "nextText": "Line two" })));
+    assert_eq!(ws_event(&mut s2.unwrap(), "stageSlide")["nextText"], "Line two");
+
+    // Browsers let any web site open a WebSocket, so other origins are refused.
+    assert_eq!(ws_open(port, "/ws", Some("http://evil.example.com")).0, 403);
+    assert_eq!(ws_open(port, "/ws", Some("null")).0, 403);
+    assert_eq!(ws_open(port, "/ws", None).0, 101, "a program without an Origin header");
+
+    // The file for vMix points at this server, on this computer first.
+    let page = w.launcher_page().unwrap();
+    assert!(page.contains(&format!("\"http://127.0.0.1:{port}/\"")));
+    assert!(!page.contains("__TARGETS__"));
+    w.stop();
+}
+
+#[test]
+fn local_media_server_serves_only_the_media_folders() {
+    let d = TempData::new();
+    let paths = d.paths();
+    std::fs::create_dir_all(&paths.media).unwrap();
+    std::fs::create_dir_all(&paths.backgrounds).unwrap();
+    std::fs::write(paths.media.join("photo one.jpg"), b"0123456789").unwrap();
+    std::fs::write(d.0.join("secret.txt"), b"private").unwrap();
+    let l = crate::localmedia::start(&paths).unwrap();
+    let c = http();
+    let url = format!("{}m/{}", l.base, "photo%20one.jpg");
+    assert_eq!(crate::localmedia::path_for(&l.base, &paths, &url), Some(paths.media.join("photo one.jpg")));
+
+    let r = c.get(&url).send().unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(r.headers().get("access-control-allow-origin").is_none(), "no CORS without an app origin");
+    assert_eq!(r.bytes().unwrap().as_ref(), b"0123456789");
+    // Video seeking needs byte ranges.
+    let r = c.get(&url).header("Range", "bytes=2-4").send().unwrap();
+    assert_eq!(r.status(), 206);
+    assert_eq!(r.bytes().unwrap().as_ref(), b"234");
+    // The app's own pages may read pixels; a web site may not.
+    let r = c.get(&url).header("Origin", "tauri://localhost").send().unwrap();
+    assert_eq!(r.headers()["access-control-allow-origin"], "tauri://localhost");
+    let r = c.get(&url).header("Origin", "http://evil.example.com").send().unwrap();
+    assert!(r.headers().get("access-control-allow-origin").is_none());
+
+    let port_base = l.base.split('/').take(3).collect::<Vec<_>>().join("/");
+    for bad in [
+        format!("{port_base}/{}/m/photo%20one.jpg", "0".repeat(32)), // wrong token
+        format!("{}x/photo%20one.jpg", l.base),                     // unknown folder
+        format!("{}m/..%2Fsecret.txt", l.base),                     // outside the folder
+        format!("{}b/photo%20one.jpg", l.base),                     // other folder
+    ] {
+        assert_eq!(c.get(&bad).send().unwrap().status(), 404, "{bad}");
+    }
+    // Another host name pointing here (DNS rebinding) is refused.
+    assert_eq!(c.get(&url).header("Host", "evil.example.com").send().unwrap().status(), 404);
+
+    // Installed fonts, by the id the font scan gave them.
+    crate::fonts::use_for_tests(&[fixture_fonts()]);
+    let cat = crate::fonts::catalog();
+    let id = &cat.faces("BP Test Sans")[0].id;
+    let r = c.get(format!("{}f/{id}", l.base)).header("Origin", "tauri://localhost").send().unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["access-control-allow-origin"], "tauri://localhost", "fonts load in CORS mode");
+    assert_eq!(c.get(format!("{}f/test-latin.ttf", l.base)).send().unwrap().status(), 404);
+    assert_eq!(c.get(format!("{port_base}/{}/f/{id}", "0".repeat(32))).send().unwrap().status(), 404);
+}
+
+#[test]
+fn big_pictures_are_scaled_down_for_the_stream() {
+    let d = TempData::new();
+    let big = d.0.join("big.png");
+    image::RgbImage::from_pixel(4000, 3000, image::Rgb([10, 20, 30])).save(&big).unwrap();
+    let (bytes, mime) = crate::webcast::stream_picture(&big).expect("scaled");
+    assert_eq!(mime, "image/jpeg");
+    let img = image::load_from_memory(&bytes).unwrap();
+    assert!(img.width() <= 2560 && img.height() <= 1440, "{}x{}", img.width(), img.height());
+    let small = d.0.join("small.png");
+    image::RgbImage::from_pixel(800, 600, image::Rgb([1, 2, 3])).save(&small).unwrap();
+    assert!(crate::webcast::stream_picture(&small).is_none(), "small pictures go out as they are");
+}
+
+/// A JPEG stored on its side with the note phones add: "turn me a quarter".
+fn sideways_photo(path: &Path, w: u32, h: u32) {
+    let mut img = image::RgbImage::from_pixel(w, h, image::Rgb([10, 20, 30]));
+    for y in 0..h / 4 {
+        for x in 0..w / 4 {
+            img.put_pixel(x, y, image::Rgb([255, 0, 0])); // red at the stored top-left
+        }
+    }
+    let mut plain = Vec::new();
+    image::DynamicImage::ImageRgb8(img).write_to(&mut std::io::Cursor::new(&mut plain), image::ImageFormat::Jpeg).unwrap();
+    // An "Exif" block with one entry: Orientation = 6.
+    let mut app1 = b"Exif\0\0MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01\0\x06\0\0\0\0\0\0".to_vec();
+    let mut out = plain[..2].to_vec();
+    out.extend([0xFF, 0xE1]);
+    out.extend(((app1.len() + 2) as u16).to_be_bytes());
+    out.append(&mut app1);
+    out.extend(&plain[2..]);
+    std::fs::write(path, out).unwrap();
+}
+
+#[test]
+fn phone_photos_keep_their_way_up_on_the_stream() {
+    let d = TempData::new();
+    let photo = d.0.join("phone.jpg");
+    sideways_photo(&photo, 4000, 3000);
+    let (bytes, _) = crate::webcast::stream_picture(&photo).expect("scaled");
+    let img = image::load_from_memory(&bytes).unwrap().to_rgb8();
+    assert_eq!((img.width(), img.height()), (1080, 1440), "upright, inside 2560x1440");
+    assert!(img.get_pixel(1060, 20).0[0] > 200 && img.get_pixel(20, 20).0[0] < 80, "the stored top-left corner is now top-right");
+}
+
+#[test]
+fn settings_survive_a_restart() {
+    let d = TempData::new();
+    let p = crate::prefs::Prefs::load(&d.0);
+    assert!(p.init_script().is_none(), "nothing saved yet");
+    // An older version's settings arrive in one go, then single changes.
+    p.set_all(&json!({ "uiLang": "uk", "webcastStyles": "{\"song\":{\"fontFamily\":\"Montserrat\"}}", "bad": 5 }));
+    p.set(&json!({ "key": "transitionMs", "value": "250" }));
+    p.set(&json!({ "key": "uiLang", "value": null }));
+    p.set(&json!({ "key": "", "value": "x" }));
+    p.set(&json!({ "key": "huge", "value": "x".repeat(600 * 1024) }));
+    p.flush();
+
+    let again = crate::prefs::Prefs::load(&d.0);
+    let js = again.init_script().unwrap();
+    assert!(js.contains("Montserrat") && js.contains("transitionMs"));
+    assert!(!js.contains("uiLang") && !js.contains("\"bad\"") && !js.contains("huge"));
+    let saved: Value = serde_json::from_slice(&std::fs::read(d.0.join("settings.json")).unwrap()).unwrap();
+    assert_eq!(saved["transitionMs"], "250");
+}
+
+fn fixture_fonts() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/fonts")
+}
+
+#[test]
+fn installed_fonts_are_found_with_their_files() {
+    let cat = crate::fonts::scan(&[fixture_fonts()]);
+    // Typographic family names group the weights the way browsers do.
+    assert_eq!(cat.families, vec!["BP Test Latin", "BP Test Sans", "BP Test Var"]);
+    let mut w: Vec<_> = cat.faces("BP Test Sans").iter().map(|f| f.weight.clone()).collect();
+    w.sort();
+    assert_eq!(w, vec!["400", "600", "700"]);
+    // A variable font is declared over its whole weight range, so weight 400
+    // isn't drawn at the file's default (Thin) instance.
+    assert_eq!(cat.faces("BP Test Var")[0].weight, "100 900");
+    use crate::fonts::{COVER_CYRILLIC, COVER_UKRAINIAN};
+    assert_eq!(cat.cover["BP Test Sans"] & 3, COVER_CYRILLIC | COVER_UKRAINIAN);
+    assert_eq!(cat.cover["BP Test Var"] & 3, COVER_CYRILLIC, "Russian letters only");
+    assert_eq!(cat.cover["BP Test Latin"], 0);
+}
+
+#[test]
+fn every_family_of_a_font_collection_is_listed() {
+    // Three of the test fonts packed into one .ttc, the way Windows and macOS
+    // ship "MS Gothic" + "MS UI Gothic" or the PingFang set.
+    let d = TempData::new();
+    let files: Vec<Vec<u8>> = ["test-latin.ttf", "test-sans-regular.ttf", "test-var.ttf"].iter().map(|n| std::fs::read(fixture_fonts().join(n)).unwrap()).collect();
+    let mut ttc = b"ttcf\0\x01\0\0".to_vec();
+    ttc.extend((files.len() as u32).to_be_bytes());
+    let mut bases = Vec::new();
+    let mut base = 12 + 4 * files.len();
+    for f in &files {
+        bases.push(base);
+        base += (f.len() + 3) & !3;
+    }
+    for b in &bases {
+        ttc.extend((*b as u32).to_be_bytes());
+    }
+    for (f, b) in files.iter().zip(&bases) {
+        let mut f = f.clone();
+        for i in 0..u16::from_be_bytes([f[4], f[5]]) as usize {
+            let at = 12 + i * 16 + 8;
+            let off = u32::from_be_bytes([f[at], f[at + 1], f[at + 2], f[at + 3]]) + *b as u32;
+            f[at..at + 4].copy_from_slice(&off.to_be_bytes());
+        }
+        f.resize((f.len() + 3) & !3, 0);
+        ttc.extend(f);
+    }
+    std::fs::write(d.0.join("pack.ttc"), ttc).unwrap();
+    std::fs::write(d.0.join("cut.ttc"), b"ttcf\0\x01\0\0\0\0\xff\xff").unwrap();
+    let cat = crate::fonts::scan(&[d.0.clone()]);
+    assert_eq!(cat.families, vec!["BP Test Latin", "BP Test Sans", "BP Test Var"]);
+    assert!(cat.faces("BP Test Sans").is_empty(), "collections are listed by name, not served as web fonts");
+}
+
+#[test]
+fn live_output_serves_font_files_by_id_only() {
+    crate::fonts::use_for_tests(&[fixture_fonts()]);
+    let w = Webcast::default();
+    let resolver: crate::webcast::MediaResolver = Arc::new(|_: &str| None);
+    let port = w.start(0, resolver).unwrap()["port"].as_u64().unwrap();
+    let c = http();
+    let base = format!("http://127.0.0.1:{port}");
+    assert_eq!(c.get(format!("{base}/fontfaces.js")).send().unwrap().status(), 200);
+    let j: Value = c.get(format!("{base}/fonts?family=BP%20Test%20Sans")).send().unwrap().json().unwrap();
+    let faces = j["faces"].as_array().unwrap();
+    assert_eq!(faces.len(), 3);
+    let url = faces[0]["url"].as_str().unwrap();
+    assert!(url.starts_with("/font/") && !url.contains("ttf") && !j.to_string().contains("fixtures"), "no paths or file names: {j}");
+    let r = c.get(format!("{base}{url}")).send().unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(&r.bytes().unwrap()[..4], &[0, 1, 0, 0]);
+    let none: Value = c.get(format!("{base}/fonts?family=Nope")).send().unwrap().json().unwrap();
+    assert_eq!(none["faces"].as_array().unwrap().len(), 0);
+    for bad in ["/font/0000000000000000", "/font/..%2F..%2Fetc%2Fpasswd", "/font/test-latin.ttf"] {
+        assert_eq!(c.get(format!("{base}{bad}")).send().unwrap().status(), 404, "{bad}");
+    }
+    // Same host check as every other route.
+    assert_eq!(c.get(format!("{base}{url}")).header("Host", "evil.example.com").send().unwrap().status(), 403);
+    w.stop();
+}

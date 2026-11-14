@@ -185,6 +185,10 @@ function getTransitionMs() {
 // carries, for text slides only. Announcement photos/videos are the slide
 // itself, so they are never covered by it.
 let liveBackground = null; // { file, type, path } or null
+// The theme of the slide on screen as it was BEFORE the strip's background
+// was laid over it, so taking that background off brings the theme's own
+// picture back instead of leaving none.
+let lastBaseTheme;
 
 function applyLiveBackground(payload) {
   if (!liveBackground) return payload;
@@ -255,6 +259,7 @@ function showOnOutput(payload) {
   if (!payload.kind) {
     payload.kind = payload.reference ? "bible" : (payload.image || payload.video) ? "media" : "song";
   }
+  lastBaseTheme = payload.theme;
   payload = applyLiveBackground(payload);
   // The stage monitor needs to know what is coming, not just what is up.
   payload.nextText = peekNextSlideText();
@@ -263,6 +268,15 @@ function showOnOutput(payload) {
   screenVisible = true;
   window.outputApi.showSlide(payload);
   remoteSync();
+}
+
+// The strip's background changed: show the slide that is up again with it.
+// A photo or clip has no background, and sending it again would start the
+// clip from the beginning.
+function reshowForBackground() {
+  if (!lastShownPayload || !screenVisible) return;
+  if (lastShownPayload.image || lastShownPayload.video) return;
+  showOnOutput({ ...lastShownPayload, theme: lastBaseTheme });
 }
 
 function toggleScreen(mode) {
@@ -293,7 +307,7 @@ document.getElementById("globalClear").addEventListener("click", clearScreen);
 // should not drop to black — the loop keeps going, the text simply goes away.
 function clearText() {
   const base = lastShownPayload && !lastShownPayload.image && !lastShownPayload.video
-    ? { ...lastShownPayload } : {};
+    ? { ...lastShownPayload, theme: lastBaseTheme } : {};
   showOnOutput({ ...base, text: "", reference: undefined });
 }
 document.getElementById("btnClearText").addEventListener("click", clearText);
@@ -640,6 +654,7 @@ bookSearch.addEventListener("input", () => renderBookList(bookSearch.value));
 // through three lists is the slow path, kept for browsing.
 // ---- Full-text verse search ----
 let searchMode = false;
+let searchTicket = 0;
 const SEARCH_LIMIT = 200;
 
 function exitSearchMode() {
@@ -651,11 +666,14 @@ function exitSearchMode() {
 async function runTextSearch(q) {
   if (!currentTranslationId) return;
   const input = document.getElementById("refSearch");
+  const ticket = ++searchTicket;
+  renderVersesTicket++;          // a chapter still loading must not overwrite the results
   verseList.innerHTML = `<div class="emptyNote">${esc(window.i18n.t("Шукаю…"))}</div>`;
   let hits = [];
   try {
     hits = await window.bibleApi.searchText(currentTranslationId, q, window.i18n.getLang(), SEARCH_LIMIT + 1);
   } catch (e) { hits = []; }
+  if (ticket !== searchTicket) return;   // a newer search is on its way
 
   searchMode = true;
   if (!hits.length) {
@@ -670,7 +688,19 @@ async function runTextSearch(q) {
   if (truncated) hits = hits.slice(0, SEARCH_LIMIT);
 
   // Highlight the match so the eye lands on it without re-reading the verse.
-  const rx = new RegExp("(" + q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi");
+  // Marked in the verse as it is and escaped afterwards: marking the escaped
+  // text missed words with an apostrophe ("ім'я") and broke on "&".
+  const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  const marked = (verse) => {
+    const text = String(verse || "");
+    let out = "", last = 0;
+    for (const m of text.matchAll(rx)) {
+      if (!m[0]) break;
+      out += esc(text.slice(last, m.index)) + "<mark>" + esc(m[0]) + "</mark>";
+      last = m.index + m[0].length;
+    }
+    return out + esc(text.slice(last));
+  };
   verseList.innerHTML =
     `<div class="searchHead">
        ${truncated
@@ -680,7 +710,7 @@ async function runTextSearch(q) {
     hits.map((h, i) => `
       <div class="verseRow searchRow" data-i="${i}" data-osis="${esc(h.osis)}" data-c="${h.chapter}" data-v="${h.verse}">
         <span class="vn" style="flex:0 0 auto;min-width:96px;text-align:left;opacity:.8">${esc(h.bookName)} ${h.chapter}:${h.verse}</span>
-        <span class="vt">${esc(h.text).replace(rx, "<mark>$1</mark>")}</span>
+        <span class="vt">${marked(h.text)}</span>
       </div>`).join("");
 
   verseList.querySelectorAll(".searchRow").forEach(el => {
@@ -955,16 +985,36 @@ async function refreshSongsList() {
       const s = songs.find(x => x.id === el.dataset.id);
       if (!s) return;
       if (!(await appConfirm(tf("Видалити пісню «{name}»?", { name: s.title })))) return;
+      if (currentSong?.id === s.id) {
+        // A save still on its way would write the song back after the delete.
+        clearTimeout(songAutosaveTimer); songAutosaveTimer = null;
+        await songSaveChain;
+      }
       await window.songsApi.delete(s.id);
       if (currentSong?.id === s.id) {
         currentSong = null;
         document.getElementById("songTitleInput").value = "";
         refreshSongCollectionOptions("");
         sectionsContainer.innerHTML = "";
+        setSongSaveStatus("");
       }
       await refreshSongsList();
     });
   });
+}
+
+// Opening a song only moves the highlight. Reading the whole library again
+// and rebuilding the list for every click made a large library (a ProPresenter
+// import) slow to click through.
+function markActiveSong() {
+  const id = currentSong && currentSong.id;
+  let found = false;
+  songsListItems.querySelectorAll(".songItem").forEach(el => {
+    const on = !!id && el.dataset.id === id;
+    el.classList.toggle("active", on);
+    if (on) found = true;
+  });
+  if (id && !found) refreshSongsList();     // not in the list yet: it is out of date
 }
 
 // ── Song collection picker: dropdown of existing collections + "create new" ──
@@ -1108,7 +1158,7 @@ async function loadSong(id) {
   renderSections();
   markSongSaved(currentSong.title, currentSong.collection || "");
   setSongSaveStatus("");
-  refreshSongsList();
+  markActiveSong();
   return true;
 }
 
@@ -1122,7 +1172,7 @@ function newSong() {
   renderSections();
   markSongSaved("", "");
   setSongSaveStatus("");
-  refreshSongsList();
+  markActiveSong();
   // Put the cursor straight into the title so the operator can type the name.
   const t = document.getElementById("songTitleInput");
   setTimeout(() => { t.focus(); t.select(); }, 0);
@@ -1978,6 +2028,13 @@ async function refreshPresList(selectId) {
   remoteSync();
 }
 
+// Opening a presentation only moves the highlight (see markActiveSong).
+function markActivePresentation() {
+  const id = currentPresentation && currentPresentation.id;
+  presListItems.querySelectorAll(".libItem").forEach(el => el.classList.toggle("active", !!id && el.dataset.id === id));
+  remoteSync();
+}
+
 async function deletePresentation(id, title) {
   if (!(await appConfirm(tf("Видалити презентацію «{name}»?", { name: title })))) return;
   await window.presentationsApi.delete(id);
@@ -1999,7 +2056,7 @@ async function loadPresentation(id) {
   if ((!p.slides || !p.slides.length) && (p.pdfFile || p.pdfPath)) {
     // Imported by an older app version that stored only a PDF: no PNG slides.
     grid.innerHTML = `<p class="emptyNote">${esc(window.i18n.t("Ця презентація збережена старою версією програми. Видаліть її та імпортуйте .pptx ще раз."))}</p>`;
-    refreshPresList();
+    markActivePresentation();
     return;
   }
 
@@ -2021,7 +2078,7 @@ async function loadPresentation(id) {
     playbackIndex = idx;
     showOnOutput({ text: slide.text || "", image: slide.imagePath ? toFileUrl(slide.imagePath) : null });
   }));
-  refreshPresList();
+  markActivePresentation();
 }
 
 // Errors crossing IPC arrive as "Error invoking remote method '…': Error: X".
@@ -2039,7 +2096,7 @@ function describeError(e) {
   if (/LIBREOFFICE_TIMEOUT/.test(raw)) return window.i18n.t("LibreOffice не встиг перетворити файл. Спробуйте ще раз або збережіть презентацію як PDF.");
   if (/BAD_ID|FILE_TOO_LARGE|TOO_MANY_PAGES/.test(raw)) return window.i18n.t("Файл пошкоджений або має невідомий формат.");
   if (/LIBREOFFICE_NO_PDF/.test(raw)) return window.i18n.t("LibreOffice не зміг перетворити файл.");
-  if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|timeout|HTTP \d+|net::ERR/i.test(raw)) return window.i18n.t("Немає зʼєднання з інтернетом або сервер не відповідає.");
+  if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|timeout|timed out|HTTP \d+|net::ERR|error sending request|dns error|failed to lookup|connection (?:refused|reset|closed|aborted)|error trying to connect/i.test(raw)) return window.i18n.t("Немає зʼєднання з інтернетом або сервер не відповідає.");
   if (/Unexpected token|Unexpected end of JSON|is not valid JSON|JSON\.parse/i.test(raw)) return window.i18n.t("Файл пошкоджений або має невідомий формат.");
   if (/PDF_PASSWORD/.test(raw)) return window.i18n.t("PDF захищений паролем. Зніміть пароль і імпортуйте знову.");
   if (/PDF_EMPTY/.test(raw)) return window.i18n.t("У PDF немає сторінок.");
@@ -2338,17 +2395,33 @@ const bibleThemeSelect = document.getElementById("bibleThemeSelect");
 const songThemeSelect = document.getElementById("songThemeSelect");
 let bibleTheme = null, songTheme = null;   // full theme objects (or null = default)
 let systemFonts = [];
+window.bpFonts.use((family) => window.systemApi.fontFaces(family));
 // Safe built-ins offered at the top of every font picker.
 const BASE_FONTS = ["Georgia", "Arial", "Times New Roman", "Verdana", "Tahoma", "Segoe UI", "Calibri"];
 function allFonts() { return [...new Set([...BASE_FONTS, ...systemFonts])]; }
 
+// Which scripts each installed family can write (fonts.rs: 1 Cyrillic,
+// 2 Ukrainian letters, 4 Greek, 8 Central European Latin).
+let fontCover = {};
+const LANG_NEEDS = { uk: 3, ru: 1, bg: 1, sr: 1, el: 4, pl: 8, cs: 8, sk: 8, ro: 8, hr: 8, hu: 8, et: 8, lv: 8, lt: 8, tr: 8 };
+// One <option> of a font list. A family that lacks letters of the interface
+// language is marked: those letters would come from another font, and the
+// text would look like a different typeface.
+function fontOptionHtml(f) {
+  const need = LANG_NEEDS[window.i18n.getLang()] || 0;
+  const have = fontCover[f];
+  const short = need && have !== undefined && (have & need) !== need;
+  const label = short ? `${f} — ${window.i18n.t("немає літер цієї мови")}` : f;
+  return `<option value="${esc(f)}" style="font-family:'${esc(f)}'">${esc(label)}</option>`;
+}
 async function loadSystemFonts() {
   try {
     systemFonts = await window.systemApi.listFonts();
+    fontCover = (await window.systemApi.fontCover()) || {};
   } catch (e) { systemFonts = []; }
   const all = allFonts();
   const fontSel = document.getElementById("te_font");
-  fontSel.innerHTML = all.map(f => `<option value="${esc(f)}" style="font-family:'${esc(f)}'">${esc(f)}</option>`).join("");
+  fontSel.innerHTML = all.map(fontOptionHtml).join("");
 }
 
 async function refreshThemes(selectBibleId, selectSongId) {
@@ -2583,7 +2656,7 @@ function updatePreviewStyle() {
   }
   cv.style.setProperty("--pv-bg", t.background || "#000");
   cv.style.setProperty("--pv-color", t.color || "#fff");
-  cv.style.setProperty("--pv-font", t.fontFamily ? `"${t.fontFamily}", "Segoe UI", sans-serif` : "Georgia, serif");
+  cv.style.setProperty("--pv-font", t.fontFamily ? window.bpFonts.stack(t.fontFamily, '"Segoe UI", sans-serif') : "Georgia, serif");
   // Match the output exactly: output font = fontSize/1080 of screen height.
   // Scale the same ratio against the preview canvas's real pixel height.
   const canvasH = cv.clientHeight || 400;
@@ -2703,6 +2776,19 @@ function readThemeEditor() {
   };
 }
 
+// The preview clip must not keep playing behind the closed editor: a hidden
+// copy still decodes, next to the same clip on the projector.
+function dropThemePreviewVideo() {
+  const v = teEls.te_preview && teEls.te_preview.querySelector("video.tePreviewVid");
+  if (!v) return;
+  try { v.pause(); v.removeAttribute("src"); v.load(); } catch (e) {}
+  v.remove();
+}
+function closeThemeEditor() {
+  document.getElementById("themeOverlay").style.display = "none";
+  dropThemePreviewVideo();
+}
+
 function updateThemeEditorPreview() {
   const t = readThemeEditor();
   teEls.te_size_val.textContent = t.fontSize;
@@ -2711,20 +2797,26 @@ function updateThemeEditorPreview() {
   teEls.te_linegap_val.textContent = t.lineGap.toFixed(2);
   const p = teEls.te_preview;
   p.style.background = t.background;
-  // Show the chosen background (video shows its poster-ish first frame via <video>).
-  const oldVid = p.querySelector("video.tePreviewVid");
-  if (oldVid) oldVid.remove();
+  // Show the chosen background. The clip is kept while it stays the same:
+  // this runs for every step of a slider, and loading the file again each
+  // time made the preview flicker and the sliders drag.
+  const wantVid = teBg.path && teBg.type === "video" ? toFileUrl(teBg.path) : null;
+  let vid = p.querySelector("video.tePreviewVid");
+  if (vid && vid.dataset.src !== wantVid) { dropThemePreviewVideo(); vid = null; }
   p.style.backgroundImage = "none";
   if (teBg.path) {
-    if (teBg.type === "video") {
-      const v = document.createElement("video");
-      v.className = "tePreviewVid";
-      v.src = toFileUrl(teBg.path);
-      v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
-      v.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:" + (t.bgFit === "contain" ? "contain" : "cover") + ";z-index:0";
-      p.style.position = "relative";
-      p.insertBefore(v, p.firstChild);
-      const pr=v.play(); if(pr&&pr.catch) pr.catch(()=>{});
+    if (wantVid) {
+      if (!vid) {
+        vid = document.createElement("video");
+        vid.className = "tePreviewVid";
+        vid.dataset.src = wantVid;
+        vid.src = wantVid;
+        vid.muted = true; vid.loop = true; vid.autoplay = true; vid.playsInline = true;
+        p.style.position = "relative";
+        p.insertBefore(vid, p.firstChild);
+        const pr=vid.play(); if(pr&&pr.catch) pr.catch(()=>{});
+      }
+      vid.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:" + (t.bgFit === "contain" ? "contain" : "cover") + ";z-index:0";
     } else {
       p.style.backgroundImage = `url("${toFileUrl(teBg.path)}")`;
       p.style.backgroundSize = t.bgFit === "contain" ? "contain" : "cover";
@@ -2736,7 +2828,7 @@ function updateThemeEditorPreview() {
   if (txtEl) { txtEl.style.position = "relative"; txtEl.style.zIndex = "1"; }
   const txt = teEls.te_preview_text;
   txt.style.color = t.color;
-  txt.style.fontFamily = `"${resolveFontFamily(t.fontFamily)}", "Segoe UI", sans-serif`;
+  txt.style.fontFamily = window.bpFonts.stack(resolveFontFamily(t.fontFamily), '"Segoe UI", sans-serif');
   // Same proportion as the projector (size is in 1080-line units), so the
   // preview shows real line breaks rather than a rough impression.
   const ph = p.clientHeight;
@@ -2885,7 +2977,14 @@ async function openThemeForEdit(id) {
   document.getElementById("themeDlgTitle").textContent = window.i18n.t("Редагування теми");
   teEls.te_name.value = t.name || "";
   teEls.te_target.value = t.target || "both";
-  if ([...teEls.te_font.options].some(o => o.value === t.fontFamily)) teEls.te_font.value = t.fontFamily;
+  // A theme's font missing from this computer's list (an imported theme)
+  // still shows as chosen, instead of quietly becoming the first entry.
+  if (t.fontFamily && ![...teEls.te_font.options].some(o => o.value === t.fontFamily)) {
+    const o = document.createElement("option");
+    o.value = o.textContent = t.fontFamily;
+    teEls.te_font.insertBefore(o, teEls.te_font.firstChild);
+  }
+  if (t.fontFamily) teEls.te_font.value = t.fontFamily;
   teEls.te_size.value = t.fontSize ?? 80;
   teEls.te_spacing.value = Math.round((t.letterSpacing ?? 0) * 100);
   teEls.te_line.value = Math.round((t.lineHeight ?? 1.3) * 100);
@@ -2903,14 +3002,14 @@ async function openThemeForEdit(id) {
   document.getElementById("themeOverlay").style.display = "flex";
 }
 
-document.getElementById("btnCancelTheme").addEventListener("click", () => { document.getElementById("themeOverlay").style.display = "none"; });
+document.getElementById("btnCancelTheme").addEventListener("click", closeThemeEditor);
 
 document.getElementById("btnSaveTheme").addEventListener("click", async () => {
   const t = readThemeEditor();
   if (!t.name) { teEls.te_name.style.borderColor = "var(--red)"; teEls.te_name.focus(); return; }
   teEls.te_name.style.borderColor = "";
   const saved = await window.themesApi.save(t);
-  document.getElementById("themeOverlay").style.display = "none";
+  closeThemeEditor();
   // Auto-assign the new theme to the chosen target(s)
   const b = (t.target === "both" || t.target === "bible") ? saved.id : bibleThemeSelect.value;
   const s = (t.target === "both" || t.target === "song") ? saved.id : songThemeSelect.value;
@@ -3457,11 +3556,7 @@ setInterval(refreshStreamDot, 4000);
         // projector doesn't keep pointing at a file that no longer exists.
         liveBackground = null;
         refreshPreviewBackground();
-        if (lastShownPayload && screenVisible) {
-          const p = { ...lastShownPayload };
-          if (p.theme) { p.theme = { ...p.theme }; delete p.theme.bgUrl; delete p.theme.bgType; }
-          showOnOutput(p);
-        }
+        reshowForBackground();
       }
       renderBackgroundsStrip();
     }));
@@ -3478,18 +3573,13 @@ setInterval(refreshStreamDot, 4000);
       markActive();
       refreshPreviewBackground();
       // Re-send the slide that is already up so the change is instant.
-      if (lastShownPayload && screenVisible) showOnOutput({ ...lastShownPayload });
+      reshowForBackground();
     }));
     document.getElementById("bgStripClear").addEventListener("click", () => {
       liveBackground = null;
       markActive();
       refreshPreviewBackground();
-      if (lastShownPayload && screenVisible) {
-        // Strip the override off the payload so the theme's own look returns.
-        const p = { ...lastShownPayload };
-        if (p.theme) { p.theme = { ...p.theme }; delete p.theme.bgUrl; delete p.theme.bgType; }
-        showOnOutput(p);
-      }
+      reshowForBackground();   // the theme's own look returns
     });
     document.getElementById("bgStripAdd").addEventListener("click", async () => {
       try {
@@ -3497,7 +3587,7 @@ setInterval(refreshStreamDot, 4000);
         if (added && added.length) liveBackground = added[added.length - 1];
         refreshPreviewBackground();
         renderBackgroundsStrip();
-        if (liveBackground && lastShownPayload && screenVisible) showOnOutput({ ...lastShownPayload });
+        if (liveBackground) reshowForBackground();
       } catch (e) { appAlert(window.i18n.t("Не вдалося додати фон:") + "\n" + describeError(e)); }
     });
   }
@@ -3508,7 +3598,7 @@ setInterval(refreshStreamDot, 4000);
     if (added && added.length) liveBackground = added[added.length - 1];
     refreshPreviewBackground();
     renderBackgroundsStrip();
-    if (liveBackground && lastShownPayload && screenVisible) showOnOutput({ ...lastShownPayload });
+    if (liveBackground) reshowForBackground();
   });
 
   tabPl.addEventListener("click", () => setMode("playlist"));
@@ -3527,12 +3617,23 @@ document.getElementById("btnNewPlaylist").addEventListener("click", async () => 
 
 // Auto-save: the playlist persists on every change (create/add/remove) so an
 // operator never loses a service plan by forgetting to press «Зберегти».
-async function savePlaylistNow() {
-  if (!currentPlaylist || !currentPlaylist.name) return;
+// Saves are chained, as for songs: two overlapping saves of a NEW playlist
+// would create two files. The id goes to the playlist that was saved — the
+// operator may have switched to another one while the write was on its way,
+// and that one must not inherit this id (its next save would overwrite this).
+let playlistSaveChain = Promise.resolve();
+function savePlaylistNow() {
+  const run = playlistSaveChain.then(doSavePlaylist);
+  playlistSaveChain = run.catch(() => {});
+  return run;
+}
+async function doSavePlaylist() {
+  const pl = currentPlaylist;
+  if (!pl || !pl.name) return;
   try {
-    const saved = await window.playlistsApi.save({ id: currentPlaylist.id, name: currentPlaylist.name, items: currentPlaylist.items });
-    currentPlaylist.id = saved.id;
-    localStorage.setItem("lastPlaylistId", saved.id);
+    const saved = await window.playlistsApi.save({ id: pl.id, name: pl.name, items: pl.items });
+    pl.id = saved.id;
+    if (currentPlaylist === pl) localStorage.setItem("lastPlaylistId", saved.id);
     // Only refresh the dropdown. Passing the id would reload the playlist from
     // disk and reset the live entry every time an item is added or moved.
     await refreshPlaylistSelect();
@@ -3562,6 +3663,12 @@ document.getElementById("btnDeletePlaylist").addEventListener("click", async () 
 });
 
 playlistSelect.addEventListener("change", () => { if (playlistSelect.value) loadPlaylist(playlistSelect.value); });
+
+// A list that keeps the keyboard after a choice swallows the clicker: Page
+// Down from the presenter remote then jumps to the last translation or theme
+// in that list instead of moving to the next slide.
+[translationSelect, bibleThemeSelect, songThemeSelect, playlistSelect].forEach(sel =>
+  sel.addEventListener("change", () => sel.blur()));
 
 (async () => {
   await refreshPlaylistSelect();
@@ -3687,7 +3794,16 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
 
   function writeEditor(st) {
     S("wcOwn").checked = !!st.useOwnTheme;
-    if ([...S("wcFont").options].some(o => o.value === st.fontFamily)) S("wcFont").value = st.fontFamily;
+    // A saved font missing from the list (not found by the font scan, or
+    // removed since) still shows as chosen: picking another entry silently
+    // would replace it with the next change of any other setting.
+    const fontSel = S("wcFont");
+    if (st.fontFamily && ![...fontSel.options].some(o => o.value === st.fontFamily)) {
+      const o = document.createElement("option");
+      o.value = o.textContent = st.fontFamily;
+      fontSel.insertBefore(o, fontSel.firstChild);
+    }
+    if (st.fontFamily) fontSel.value = st.fontFamily;
     S("wcSize").value = st.fontSize; S("wcSpacing").value = Math.round((st.letterSpacing || 0) * 100);
     S("wcLine").value = Math.round((st.lineHeight || 1.25) * 100);
     S("wcColor").value = st.color; S("wcBold").checked = !!st.bold; S("wcUpper").checked = !!st.uppercase;
@@ -3752,7 +3868,7 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
                       : [window.i18n.t("Влади не має смерть,"), window.i18n.t("наш Бог Ісус воскрес.")]);
     const fs = Math.max(9, (st.useOwnTheme ? st.fontSize : 46) * 0.22);
     const styleLine = (el) => {
-      el.style.fontFamily = `"${st.useOwnTheme ? st.fontFamily : "Segoe UI"}", sans-serif`;
+      el.style.fontFamily = st.useOwnTheme ? window.bpFonts.stack(st.fontFamily, "sans-serif") : '"Segoe UI", sans-serif';
       el.style.fontSize = fs + "px";
       el.style.color = st.color;
       el.style.fontWeight = st.bold ? "700" : "400";
@@ -3797,7 +3913,7 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
       r.textContent = window.i18n.t("Ісаї 40:6-8");
       r.style.display = "inline-block";
       r.style.fontSize = (fs * (st.refSize ?? 0.62)) + "px";
-      r.style.fontFamily = `"${st.useOwnTheme ? st.fontFamily : "Segoe UI"}", sans-serif`;
+      r.style.fontFamily = st.useOwnTheme ? window.bpFonts.stack(st.fontFamily, "sans-serif") : '"Segoe UI", sans-serif';
       if (st.refSeparate) {
         r.style.background = st.refBgColor; r.style.color = st.refColor;
         r.style.fontWeight = st.refBold ? "700" : "400";
@@ -3809,7 +3925,12 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
     }
   }
 
+  // Until the saved look is in the editor, the fields hold the defaults; a
+  // push or a target switch then would save those over the operator's look.
+  let styleReady = false;
+  let pushedStyles = null;
   async function pushStyle() {
+    if (!styleReady) return;
     styles[target] = readEditor();
     // Settings survive an uninstall, so a font name saved by an older build can
     // still be sitting here. Resolve both targets on every push, not just the
@@ -3831,12 +3952,17 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
       if (!ok) warn.textContent = "⚠ " + window.i18n.t("Шрифт не встановлено на цьому компʼютері — трансляція покаже запасний:") + " " + f;
     }
     paintPreview(styles[target]);
-    localStorage.setItem("webcastStyles", JSON.stringify(styles));
+    // Sliders and lists fire both "input" and "change": the same look is not
+    // saved and sent to every connected page twice.
+    const json = JSON.stringify(styles);
+    if (json === pushedStyles) return;
+    pushedStyles = json;
+    localStorage.setItem("webcastStyles", json);
     await window.webcastApi.setStyle(styles); // live — connected vMix updates at once
   }
 
   function switchTarget(t) {
-    styles[target] = readEditor();   // keep edits of the current target
+    if (styleReady) styles[target] = readEditor();   // keep edits of the current target
     target = t;
     writeEditor(styles[target]);
     paintPreview(styles[target]);
@@ -3849,7 +3975,7 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
     const sel = S("wcFont");
     if (!sel.options.length) {
       await loadSystemFonts();
-      sel.innerHTML = allFonts().map(f => `<option value="${esc(f)}" style="font-family:'${esc(f)}'">${esc(f)}</option>`).join("");
+      sel.innerHTML = allFonts().map(fontOptionHtml).join("");
     }
     try {
       const saved = JSON.parse(localStorage.getItem("webcastStyles") || "null");
@@ -3862,6 +3988,7 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
     } catch (e) {}
     writeEditor(styles[target]);
     paintPreview(styles[target]);
+    styleReady = true;
     await window.webcastApi.setStyle(styles);
   }
 
@@ -3956,7 +4083,9 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
     el.addEventListener("input", pushStyle);
     el.addEventListener("change", pushStyle);
   });
-  loadStyle();
+  // Kept so the auto-start below can wait for it: until the saved look is in
+  // the editor, a push would read blank fields and overwrite the saved style.
+  const styleLoaded = loadStyle().catch((e) => { styleReady = true; console.warn("stream style:", e); });
   refreshThemeList();
 
   topBtn.addEventListener("click", async () => {
@@ -4044,6 +4173,13 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
     refreshStreamDot();
   });
 
+  // vMix opened before this program loads an error page and never retries;
+  // this file loads anyway and waits for the program.
+  document.getElementById("btnSaveLauncher").addEventListener("click", async () => {
+    try { await window.webcastApi.saveLauncher(); }
+    catch (e) { appAlert(describeError(e)); }
+  });
+
   toggleBtn.addEventListener("click", async () => {
     const st = await window.webcastApi.status();
     if (st.running) {
@@ -4055,6 +4191,7 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
       if (!r.ok) { appAlert(window.i18n.t("Не вдалося запустити трансляцію:")+"\n" + r.error); return; }
       localStorage.setItem("webcastPort", String(port));
       localStorage.setItem("webcastOn", "1");
+      pushedStyles = null;
       await pushStyle(); // apply the saved stream look to the fresh server
     }
     await refresh();
@@ -4066,8 +4203,10 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
   // Auto-start if it was on last session (service continuity).
   (async () => {
     if (localStorage.getItem("webcastOn") === "1") {
+      // The saved look goes to the core first, so vMix or OBS connecting the
+      // moment the server is up gets it, never the default one.
+      await styleLoaded;
       await window.webcastApi.start(Number(portEl.value) || 7777);
-      await pushStyle();
     }
     refresh();
   })();
@@ -4077,6 +4216,22 @@ playlistSelect.addEventListener("change", () => { if (playlistSelect.value) load
 //  CLICKER / playback navigation
 // ════════════════════════════════════════════════════════════
 let playbackQueue = null, playbackIndex = -1;
+
+// Clicker, keyboard and phone steps run one at a time, in the order they were
+// pressed: a step waits for the core (a verse, a song to open), and two quick
+// presses could otherwise finish the wrong way round and leave the earlier
+// slide on screen.
+// A step can wait on the operator (a question about an unsaved song); Next and
+// Back pressed meanwhile are not saved up beyond two, so closing the question
+// doesn't fire a burst of slides. Show, hide and phone commands always run.
+let stepChain = Promise.resolve(), stepsWaiting = 0;
+function inOrder(fn, droppable) {
+  if (droppable && stepsWaiting >= 2) return Promise.resolve();
+  stepsWaiting++;
+  const run = stepChain.then(fn).finally(() => { stepsWaiting--; });
+  stepChain = run.catch((e) => { console.warn("step failed:", e); });
+  return run;
+}
 
 // Moves the live Bible position to the neighbouring chapter (crossing into the
 // next or previous book when needed). Returns false at the very start of
@@ -4172,8 +4327,8 @@ async function clickerStep(dir) {
 }
 
 window.clickerApi.onNav(dir => {
-  if (dir === "next" || dir === "prev") clickerStep(dir);
-  else toggleScreen(dir); // "show" | "hide" | "toggle"
+  if (dir === "next" || dir === "prev") inOrder(() => clickerStep(dir), true);
+  else inOrder(() => toggleScreen(dir)); // "show" | "hide" | "toggle"
 });
 
 // Topmost first: a question can sit over the theme editor, the background
@@ -4207,19 +4362,19 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && pop && pop.classList.contains("open")) { pop.classList.remove("open"); e.preventDefault(); return; }
   if (["ArrowRight", "ArrowDown", "PageDown", " "].includes(e.key)) {
     e.preventDefault();
-    clickerStep("next");
+    inOrder(() => clickerStep("next"), true);
   } else if (["ArrowLeft", "ArrowUp", "PageUp"].includes(e.key)) {
     e.preventDefault();
-    clickerStep("prev");
+    inOrder(() => clickerStep("prev"), true);
   } else if (e.key === "F5") {
     e.preventDefault();
-    toggleScreen("show");
+    inOrder(() => toggleScreen("show"));
   } else if (e.key === "Escape") {
     e.preventDefault();
-    toggleScreen("hide");
+    inOrder(() => toggleScreen("hide"));
   } else if (["b", "B", ".", "w", "W"].includes(e.key)) {
     e.preventDefault();
-    toggleScreen("toggle");
+    inOrder(() => toggleScreen("toggle"));
   }
 });
 
@@ -4392,11 +4547,10 @@ async function remoteOpenPresentation(id) {
   document.getElementById("presSlideGrid").querySelectorAll(".slideCard").forEach((c) => c.classList.remove("live"));
 }
 
-let remoteBusy = Promise.resolve();
 window.remoteApi?.onCommand((c) => {
   // One at a time and in order: two quick taps on Next are two slides, and a
   // slow step (opening a song) must not be overtaken by the next command.
-  remoteBusy = remoteBusy.then(async () => {
+  inOrder(async () => {
     try {
       if (c.cmd === "next" || c.cmd === "prev") await clickerStep(c.cmd);
       else if (c.cmd === "screen") toggleScreen("toggle");

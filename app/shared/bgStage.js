@@ -141,4 +141,59 @@
     return { set, pause, clear };
   }
   window.createBgStage = createBgStage;
+
+  // A slide's own picture or clip, made ready before the crossfade starts:
+  // the picture decoded off the main thread, the clip's first frame painted.
+  // Starting the fade first made the page stall while a large photo decoded
+  // (half a second for a phone photo) and showed a black or frozen frame
+  // while a clip opened; in vMix, whose browser draws without the GPU, that
+  // is the stutter people see. Resolves with the decoded <img> for pictures
+  // (the page shows exactly that bitmap), null otherwise. Never waits longer
+  // than maxMs: a slow file still shows, just as before.
+  window.slideMediaReady = function (kind, url, video, maxMs) {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => { if (!done) { done = true; resolve(v); } };
+      setTimeout(() => finish(null), maxMs || 2000);
+      if (kind === "image") {
+        const img = new Image();
+        img.decoding = "async";
+        img.src = url;
+        const ok = () => finish(img), bad = () => finish(null);
+        if (img.decode) img.decode().then(ok, bad); else { img.onload = ok; img.onerror = bad; }
+      } else if (kind === "video" && video) {
+        const onFrame = () => {
+          if (typeof video.requestVideoFrameCallback === "function") video.requestVideoFrameCallback(() => finish(null));
+          else finish(null);
+        };
+        video.addEventListener("playing", onFrame, { once: true });
+        video.addEventListener("error", () => finish(null), { once: true });
+      } else finish(null);
+    });
+  };
+
+  // The layer that just faded out: its clip keeps decoding (and sounding)
+  // unless it is stopped, so turn the sound down with the fade and release
+  // the clip and the picture once the layer is fully hidden — unless the
+  // layer was shown again in the meantime.
+  window.retireLayer = function (layer, durMs, videoSel, imgSel) {
+    const v = layer.querySelector(videoSel);
+    const im = layer.querySelector(imgSel);
+    const dur = Math.max(0, Number(durMs) || 0);
+    if (v && v.getAttribute("src") && !v.muted && dur) {
+      const v0 = v.volume, t0 = performance.now();
+      const step = () => {
+        if (layer.classList.contains("visible")) { v.volume = v0; return; }
+        const k = Math.min(1, (performance.now() - t0) / dur);
+        v.volume = v0 * (1 - k);
+        if (k < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }
+    setTimeout(() => {
+      if (layer.classList.contains("visible")) return;
+      if (v && v.getAttribute("src")) { v.pause(); v.removeAttribute("src"); v.load(); v.volume = 1; }
+      if (im) im.remove();
+    }, dur + 120);
+  };
 })();

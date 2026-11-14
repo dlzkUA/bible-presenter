@@ -10,7 +10,9 @@ mod dialogs;
 mod fonts;
 mod lan;
 mod library;
+mod localmedia;
 mod migrate;
+mod prefs;
 mod present;
 mod propres;
 mod remote;
@@ -88,6 +90,7 @@ fn main() {
             let st = handle.state::<Arc<AppState>>();
             st.webcast.stop();
             st.remote.stop();
+            st.prefs.flush();
         }
     });
 }
@@ -120,6 +123,15 @@ fn api_sync(app: AppHandle, ch: String, arg: Option<Value>) -> R {
             if let Some(w) = state::output(&app) {
                 let _ = w.emit_to(w.label(), "output:setTheme", arg);
             }
+            Ok(Value::Null)
+        }
+        // Settings changes, in the order the page made them.
+        "prefs:set" => {
+            st.prefs.set(&arg);
+            Ok(Value::Null)
+        }
+        "prefs:setAll" => {
+            st.prefs.set_all(&arg);
             Ok(Value::Null)
         }
         "output:ready" => {
@@ -187,11 +199,32 @@ fn dispatch(app: &AppHandle, ch: &str, arg: &Value) -> R {
             Ok(json!({ "version": st.version, "buildDate": st.build_date, "dataDir": st.paths.root.to_string_lossy(), "exeDir": exe }))
         }
         "system:listFonts" => {
-            let mut cache = st.fonts.lock();
-            if cache.is_none() {
-                *cache = Some(fonts::scan_installed_fonts());
+            Ok(json!(fonts::catalog().families))
+        }
+        // Which scripts each family can write, for the warning in the font list.
+        "system:fontCover" => Ok(json!(fonts::catalog().cover)),
+        // The files of one family, for @font-face (see fonts.rs for why).
+        "system:fontFaces" => {
+            let fam = arg.as_str().unwrap_or("");
+            let cat = fonts::catalog();
+            let faces = cat.faces(fam);
+            if faces.is_empty() {
+                return Ok(json!({ "faces": [] }));
             }
-            Ok(json!(cache.clone().unwrap_or_default()))
+            let base = {
+                let mut lm = st.local_media.lock();
+                if lm.is_none() {
+                    if let Ok(l) = localmedia::start(&st.paths) {
+                        *lm = Some(l);
+                    }
+                }
+                lm.as_ref().map(|l| l.base.clone())
+            };
+            let Some(base) = base else { return Ok(json!({ "faces": [] })) };
+            Ok(json!({ "faces": faces.iter().map(|f| json!({
+                "url": format!("{base}f/{}", f.id), "weight": f.weight,
+                "style": if f.italic { "italic" } else { "normal" }, "stretch": f.stretch,
+            })).collect::<Vec<_>>() }))
         }
         "system:openExternal" => {
             let url = arg.as_str().unwrap_or("");
@@ -206,6 +239,22 @@ fn dispatch(app: &AppHandle, ch: &str, arg: &Value) -> R {
             update::install_pending(app);
             app.exit(0);
             Ok(Value::Null)
+        }
+
+        // ---- the app's own pictures and clips over loopback HTTP (Windows) ----
+        "media:local" => {
+            if !localmedia::wanted() {
+                return Ok(Value::Null);
+            }
+            let mut lm = st.local_media.lock();
+            if lm.is_none() {
+                match localmedia::start(&st.paths) {
+                    Ok(l) => *lm = Some(l),
+                    Err(_) => return Ok(Value::Null),   // the asset protocol still works
+                }
+            }
+            let base = lm.as_ref().map(|l| l.base.clone()).unwrap_or_default();
+            Ok(json!({ "base": base, "media": st.paths.media.to_string_lossy(), "backgrounds": st.paths.backgrounds.to_string_lossy() }))
         }
 
         // ---- live output ----
@@ -238,6 +287,13 @@ fn dispatch(app: &AppHandle, ch: &str, arg: &Value) -> R {
                 }
             }
             Ok(json!(on))
+        }
+        "webcast:saveLauncher" => {
+            let Some(page) = st.webcast.launcher_page() else { return Ok(Value::Null) };
+            match dialogs::save_file(app, &st.t("Зберегти файл для vMix"), "bible-presenter-live.html", &[("HTML", &["html"])]) {
+                None => Ok(Value::Null),
+                Some(fp) => std::fs::write(&fp, page).map(|_| json!(true)).map_err(|e| e.to_string()),
+            }
         }
         "webcast:clear" => {
             if st.webcast.is_running() {

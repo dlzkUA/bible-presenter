@@ -1,0 +1,9 @@
+# cargo audit settings (run from src-tauri).
+[advisories]
+# zip: ZipArchive::extract can follow symlinks, keep SUID bits from the
+# archive, or abort on a symlink entry with a huge declared size. Our own code uses zip 9 (fixed) and never calls extract. The only
+# older copy (zip 4.6.1) is inside tauri-plugin-updater, which extracts an
+# update only after checking its signature against our key, and on Windows
+# only; there is no newer updater release with a fixed zip yet. Remove these
+# lines when tauri-plugin-updater moves to zip 9.
+ignore = ["RUSTSEC-2026-0367", "RUSTSEC-2026-0368", "RUSTSEC-2026-0369", "RUSTSEC-2026-0429"]

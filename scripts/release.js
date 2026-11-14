@@ -55,10 +55,16 @@ async function main() {
   say(`Bible Presenter ${version}`);
 
   // ---- tools (npm first: it also turns on the pre-push check for this clone)
+  const nodeIssue = require("./node-version").nodeProblem();
+  if (nodeIssue) fail(nodeIssue);
   const cliWorks = () => spawnSync(process.execPath, [CLI, "--version"], { stdio: "ignore" }).status === 0;
-  if (!cliWorks()) {
+  // A version bump in package.json (say, a security fix in the Tauri CLI) must
+  // reach node_modules too, not only the first install.
+  const cliPkg = path.join(root, "node_modules", "@tauri-apps", "cli", "package.json");
+  const cliCurrent = () => { try { return readJson(cliPkg).version === (pkg.devDependencies || {})["@tauri-apps/cli"]; } catch (e) { return false; } };
+  if (!cliWorks() || !cliCurrent()) {
     const r = spawnSync("npm install --no-audit --no-fund", { cwd: root, stdio: "inherit", shell: true });
-    if (r.status !== 0 || !cliWorks()) fail("npm install не удался (нужен интернет). Если повторяется — удалите папку node_modules и запустите снова.");
+    if (r.status !== 0 || !cliWorks() || !cliCurrent()) fail("npm install не удался (нужен интернет). Если повторяется — удалите папку node_modules и запустите снова.");
   } else {
     spawnSync(process.execPath, [path.join(__dirname, "install-hooks.js")], { cwd: root, stdio: "inherit" });
   }

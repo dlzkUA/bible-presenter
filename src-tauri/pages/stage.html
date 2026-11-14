@@ -49,6 +49,7 @@
   </div>
 </div>
 <div id="ref"></div>
+<script src="/link.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, "0");
@@ -85,14 +86,14 @@ function applySlide(p) {
   $("ref").textContent      = (p && p.reference) || "";
 }
 
-const es = new EventSource("/events?role=stage");
-es.addEventListener("stage", (e) => { try { const c = JSON.parse(e.data); if (typeof c.timerElapsedMs === "number") started = Date.now() - c.timerElapsedMs; applyStage(c); } catch (err) {} });
-es.addEventListener("stageSlide", (e) => { try { applySlide(JSON.parse(e.data)); } catch (err) {} });
-es.addEventListener("stageClear", () => {
-  // Room screen went black. Clear the current line but keep "next" visible —
-  // the band still needs to know what is coming.
-  $("curText").textContent = "";
-  $("ref").textContent = "";
+bpLink("stage", {
+  stage: (c) => { if (typeof c.timerElapsedMs === "number") started = Date.now() - c.timerElapsedMs; applyStage(c); },
+  stageSlide: (p) => applySlide(p),
+  stageClear: () => {
+    // Room screen went black. Clear the current line but keep "next" visible —
+    // the band still needs to know what is coming.
+    $("curText").textContent = "";
+    $("ref").textContent = "";
+  },
 });
-es.onerror = () => {};
 </script></body></html>

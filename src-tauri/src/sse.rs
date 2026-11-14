@@ -163,6 +163,20 @@ pub fn serve_connect_info(
     Ok(Running { port: actual, stop: Some(stop) })
 }
 
+/// Serves on a listener that is already bound (the loopback-only media server).
+pub fn serve_listener(
+    listener: tokio::net::TcpListener,
+    svc: axum::extract::connect_info::IntoMakeServiceWithConnectInfo<axum::Router, std::net::SocketAddr>,
+) -> Running {
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+    let (stop, graceful, hard) = stopper();
+    tauri::async_runtime::spawn(async move {
+        let server = axum::serve(listener, svc).with_graceful_shutdown(graceful);
+        tokio::select! { _ = server => {}, _ = hard => {} }
+    });
+    Running { port, stop: Some(stop) }
+}
+
 fn bind(port: u16) -> Result<tokio::net::TcpListener, std::io::Error> {
     tauri::async_runtime::block_on(async move { tokio::net::TcpListener::bind(("0.0.0.0", port)).await })
 }
@@ -199,4 +213,76 @@ pub fn port_error(e: &std::io::Error, port: u16, busy_text: &str) -> String {
     } else {
         e.to_string()
     }
+}
+
+/// A WebSocket may be opened from any web page — browsers apply no
+/// same-origin rule to it — so a socket is only accepted from a page this
+/// server sent (its Origin names the same host and port as the request) or
+/// from a program that sends no Origin at all (vMix and OBS pages do send it;
+/// they load the page from here).
+pub fn origin_ok(headers: &axum::http::HeaderMap) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN) else { return true };
+    let Ok(origin) = origin.to_str() else { return false };
+    let Some(host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) else { return false };
+    let Some(rest) = origin.strip_prefix("http://") else { return false };
+    let norm = |h: &str| {
+        let h = h.trim_end_matches('/').to_ascii_lowercase();
+        if h.ends_with(":80") { h[..h.len() - 3].to_string() } else { h }
+    };
+    !rest.contains('/') && norm(rest) == norm(host)
+}
+
+/// Feeds one WebSocket from a client queue built for the event stream: the
+/// same "event:/data:" messages, sent as {"e": name, "d": data} frames. The
+/// keep-alive comment becomes a "ping" frame, so the page can tell a quiet
+/// connection from a dead one. Ends when either side goes away; dropping the
+/// queue marks the client as gone.
+pub async fn run_ws(mut socket: axum::extract::ws::WebSocket, mut rx: mpsc::Receiver<String>) {
+    use axum::extract::ws::Message;
+    loop {
+        tokio::select! {
+            msg = rx.recv() => {
+                let Some(msg) = msg else { break };
+                let Some(frame) = sse_to_frame(&msg) else { continue };
+                if socket.send(Message::Text(frame.into())).await.is_err() {
+                    break;
+                }
+            }
+            incoming = socket.recv() => {
+                // Nothing is expected from the page; anything but an orderly
+                // message means the socket is done.
+                match incoming {
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+fn sse_to_frame(msg: &str) -> Option<String> {
+    if msg.starts_with(": ping") {
+        return Some(r#"{"e":"ping"}"#.to_string());
+    }
+    let mut name = None;
+    let mut data = None;
+    for line in msg.lines() {
+        if let Some(v) = line.strip_prefix("event: ") {
+            name = Some(v);
+        } else if let Some(v) = line.strip_prefix("data: ") {
+            data = Some(v);
+        }
+    }
+    let name = name?;
+    let data = data.unwrap_or("{}");
+    Some(format!(r#"{{"e":{},"d":{}}}"#, serde_json::to_string(name).ok()?, data))
+}
+
+/// A queue for a WebSocket client, primed with the first messages.
+pub fn queue(first: Vec<String>) -> (mpsc::Sender<String>, mpsc::Receiver<String>) {
+    let (tx, rx) = mpsc::channel::<String>(QUEUE);
+    for m in first {
+        let _ = tx.try_send(m);
+    }
+    (tx, rx)
 }

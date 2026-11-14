@@ -52,7 +52,6 @@ pub struct AppState {
     pub ui: Mutex<Ui>,
     pub bible_cache: Mutex<HashMap<String, Arc<crate::bible::Translation>>>,
     pub name_lang_cache: Mutex<HashMap<String, Option<String>>>,
-    pub fonts: Mutex<Option<Vec<String>>>,
     pub output: Mutex<Output>,
     /// Files the live-output server may hand out, by opaque id.
     pub stream_media: Arc<Mutex<HashMap<String, PathBuf>>>,
@@ -66,18 +65,22 @@ pub struct AppState {
     pub test_log: Mutex<Vec<String>>,
     pub update: crate::update::Updates,
     pub test_mode: bool,
+    /// The loopback server for the app's own windows (Windows), started on first use.
+    pub local_media: Mutex<Option<crate::localmedia::Local>>,
+    pub prefs: Arc<crate::prefs::Prefs>,
 }
 
 impl AppState {
     pub fn new(paths: Paths, version: String, remote_cfg: crate::remote::Config, test_mode: bool) -> AppState {
+        let prefs = crate::prefs::Prefs::load(&paths.root);
         AppState {
+            prefs,
             paths,
             version,
             build_date: env!("BP_BUILD_DATE").to_string(),
             ui: Mutex::new(Ui { lang: "en".into(), strings: HashMap::new() }),
             bible_cache: Mutex::new(HashMap::new()),
             name_lang_cache: Mutex::new(HashMap::new()),
-            fonts: Mutex::new(None),
             output: Mutex::new(Output::default()),
             stream_media: Arc::new(Mutex::new(HashMap::new())),
             uploads: Mutex::new(HashMap::new()),
@@ -89,6 +92,7 @@ impl AppState {
             test_log: Mutex::new(Vec::new()),
             update: crate::update::Updates::default(),
             test_mode,
+            local_media: Mutex::new(None),
         }
     }
 

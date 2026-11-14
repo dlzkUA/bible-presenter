@@ -26,6 +26,13 @@ function jsFiles(dir, out = []) {
   return out;
 }
 
+// A Node.js with known holes still runs the checks, but the owner should know
+// before building a release (release.js refuses it).
+{
+  const issue = require("./node-version").nodeProblem();
+  if (issue) console.warn("⚠ " + issue + "\n");
+}
+
 const steps = [
   ["translations", () => spawnSync(process.execPath, [path.join(__dirname, "check-i18n.js")], { stdio: "inherit" }).status === 0],
   ["JS syntax", () => {

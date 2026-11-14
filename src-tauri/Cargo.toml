@@ -1,11 +1,11 @@
 [package]
 name = "bible-presenter"
-version = "3.0.1"
+version = "3.0.2"
 edition = "2024"
 
 [dependencies]
 async-stream = "0.3.6"
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["ws"] }
 base64 = "0.23.1"
 chrono = "0.4.45"
 dirs = "7.0.0"
@@ -36,7 +36,7 @@ tokio-stream = "0.1.19"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["fs"] }
 unicode-normalization = "0.1.25"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
 prost = "0.14"

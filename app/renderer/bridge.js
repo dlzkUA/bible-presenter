@@ -36,6 +36,31 @@
   let seq = 0;
   const numbered = (p) => Object.assign({}, p || {}, { __seq: ++seq });
 
+  // ---- Settings that survive closing the app ----
+  // The control page keeps its settings in localStorage, which WebView2 saves
+  // to disk lazily: a change made shortly before the app closed could be gone
+  // after a restart (the live-output fonts came back reset). Every change is
+  // also handed to the core, which saves it and restores it before the page
+  // starts (src-tauri/src/prefs.rs).
+  if (LABEL === "control") {
+    try {
+      const ls = window.localStorage;
+      const proto = Object.getPrototypeOf(ls);
+      const setItem = proto.setItem, removeItem = proto.removeItem;
+      proto.setItem = function (k, v) {
+        setItem.call(this, k, v);
+        if (this === ls) send("prefs:set", { key: String(k), value: String(v) });
+      };
+      proto.removeItem = function (k) {
+        removeItem.call(this, k);
+        if (this === ls) send("prefs:set", { key: String(k), value: null });
+      };
+      const all = {};
+      for (let i = 0; i < ls.length; i++) { const k = ls.key(i); all[k] = ls.getItem(k); }
+      send("prefs:setAll", all);
+    } catch (e) { console.warn("settings copy:", e); }
+  }
+
   // ---- Sorting in the interface language ----
   // Lists are sorted here rather than in the core: the browser's collator
   // knows every language's alphabet (Ukrainian і/ї/є/ґ, Polish ł, …).
@@ -55,8 +80,31 @@
   // ---- Local files ----
   // Media on disk is shown through Tauri's asset protocol. Single quotes are
   // encoded because these URLs are written into CSS url('…').
+  // On Windows the media and backgrounds folders are served by the core's
+  // loopback server (src-tauri/src/localmedia.rs): videos and large photos
+  // play smoothly there, where the asset protocol stutters under load.
+  // Until its address is known, and for any other file, the asset protocol.
+  let local = null;
+  call("media:local").then((r) => { if (r && r.base) local = r; }).catch(() => {});
+  function localUrl(p) {
+    if (!local) return null;
+    const norm = (x) => String(x).replace(/\\/g, "/").replace(/\/+$/, "");
+    const file = norm(p);
+    const ci = /^[a-z]:\//i.test(file);          // Windows paths compare without case
+    for (const [kind, dir] of [["m", local.media], ["b", local.backgrounds]]) {
+      const d = norm(dir) + "/";
+      const head = file.slice(0, d.length);
+      if (ci ? head.toLowerCase() === d.toLowerCase() : head === d) {
+        const name = file.slice(d.length);
+        if (name && !name.includes("/")) return local.base + kind + "/" + encodeURIComponent(name).replace(/'/g, "%27");
+      }
+    }
+    return null;
+  }
   function fileUrl(p) {
     if (!p) return null;
+    const l = localUrl(p);
+    if (l) return l;
     return core.convertFileSrc(String(p)).replace(/'/g, "%27");
   }
 
@@ -106,6 +154,13 @@
     });
   }
   async function renderPdfJob(job) {
+    // Whatever goes wrong before the pages are drawn (a password, a damaged
+    // file), the core is told: it holds the job and LibreOffice's temporary
+    // folder until then.
+    try { return await renderPdfPages(job); }
+    catch (e) { send("presentations:abort", { id: job.id }); throw toError(e); }
+  }
+  async function renderPdfPages(job) {
     const { lib, base } = await loadPdfjs();
     const data = new Uint8Array(await core.invoke("job_pdf", { id: job.id }));
     let doc;
@@ -121,11 +176,11 @@
       if (e && e.name === "PasswordException") throw new Error("PDF_PASSWORD");
       throw new Error("PDF_UNREADABLE: " + ((e && e.message) || e));
     }
-    if (!doc.numPages) throw new Error("PDF_EMPTY");
-    // Matches MAX_PAGES in present.rs: a tiny PDF can list one page 100,000 times.
-    if (doc.numPages > 1000) throw new Error("TOO_MANY_PAGES");
     const slides = [];
     try {
+      if (!doc.numPages) throw new Error("PDF_EMPTY");
+      // Matches MAX_PAGES in present.rs: a tiny PDF can list one page 100,000 times.
+      if (doc.numPages > 1000) throw new Error("TOO_MANY_PAGES");
       for (let i = 1; i <= doc.numPages; i++) {
         const page = await doc.getPage(i);
         const v1 = page.getViewport({ scale: 1 });
@@ -145,9 +200,6 @@
         canvas.width = 1; canvas.height = 1;
         page.cleanup();
       }
-    } catch (e) {
-      send("presentations:abort", { id: job.id, slides });
-      throw toError(e);
     } finally {
       try { await doc.destroy(); } catch (e) {}
     }
@@ -157,7 +209,10 @@
   window.bp = { call, fileUrl, label: LABEL };
 
   if (LABEL === "output") {
-    window.systemApi = { listFonts: () => call("system:listFonts").then((l) => (Array.isArray(l) ? l.slice().sort((a, b) => a.localeCompare(b)) : l)) };
+    window.systemApi = {
+      listFonts: () => call("system:listFonts").then((l) => (Array.isArray(l) ? l.slice().sort((a, b) => a.localeCompare(b)) : l)),
+      fontFaces: (family) => call("system:fontFaces", family).then((r) => (r && r.faces) || []),
+    };
     window.slideApi = {
       onShowSlide: (cb) => on("output:showSlide", cb),
       onClear: (cb) => on("output:clear", () => cb()),
@@ -242,6 +297,8 @@
     checkLibreOffice: () => call("system:checkLibreOffice"),
     openExternal: (url) => call("system:openExternal", url),
     listFonts: () => call("system:listFonts").then((l) => (Array.isArray(l) ? l.slice().sort((a, b) => a.localeCompare(b)) : l)),
+    fontFaces: (family) => call("system:fontFaces", family).then((r) => (r && r.faces) || []),
+    fontCover: () => call("system:fontCover"),
     appInfo: () => call("system:appInfo"),
     checkForUpdates: () => call("system:checkForUpdates"),
     setUiStrings: (lang, strings) => call("system:setUiStrings", { lang, strings }),
@@ -285,6 +342,7 @@
     stop: () => call("webcast:stop"),
     setStyle: (style) => call("webcast:setStyle", style),
     clear: () => call("webcast:clear"),
+    saveLauncher: () => call("webcast:saveLauncher"),
     setBlackout: (on) => call("webcast:setBlackout", on),
     setStage: (cfg) => call("webcast:setStage", cfg),
     getStage: () => call("webcast:getStage"),

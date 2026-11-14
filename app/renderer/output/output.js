@@ -11,6 +11,7 @@
     // this window can outlive that guarantee (a stale in-memory theme, a
     // hand-edited JSON, a file imported from a different PC). Re-check here
     // too, so the projector never silently substitutes a different typeface.
+    window.bpFonts.use((family) => window.systemApi.fontFaces(family));
     let __installedFonts = [];
     try {
       window.systemApi.listFonts().then(list => { __installedFonts = list || []; });
@@ -44,11 +45,14 @@
     function applyThemeTo(layer, theme) {
       if (!theme) {
         THEME_VARS.forEach(v => layer.style.removeProperty(v));
+        layer.dataset.font = "";
         return;
       }
       layer.style.setProperty("--theme-bg", theme.background || "#000");
       layer.style.setProperty("--theme-color", theme.color || "#fff");
-      layer.style.setProperty("--theme-font", theme.fontFamily ? `"${resolveOutputFont(theme.fontFamily)}", "Segoe UI", sans-serif` : "Georgia, serif");
+      layer.style.setProperty("--theme-font", theme.fontFamily ? window.bpFonts.stack(resolveOutputFont(theme.fontFamily), '"Segoe UI", sans-serif') : "Georgia, serif");
+      layer.dataset.font = theme.fontFamily ? resolveOutputFont(theme.fontFamily) : "";
+      layer.dataset.bold = theme.bold ? "1" : "";
       const sizeVh = theme.fontSize ? (theme.fontSize / 1080) * 100 : 5.2;
       layer.style.setProperty("--theme-size", sizeVh + "vh");
       layer.style.setProperty("--theme-align", theme.align || "center");
@@ -81,15 +85,14 @@
         refEl.style.display = "none";
       }
       const fullVid = layer.querySelector(".fullVideo");
-      // Stop the full-frame video on EVERY layer, not just the incoming one.
-      // The crossfade alternates layers, so clearing only this one left the
-      // previous layer's clip playing — two soundtracks at once.
-      layers.forEach(l => {
-        const v = l.querySelector(".fullVideo");
-        if (!v) return;
-        v.style.display = "none";
-        if (v.src) { v.pause(); v.removeAttribute("src"); v.load(); }
-      });
+      // This layer is being reused: drop its old clip and picture. The layer
+      // that is fading out keeps its clip until the fade is over (its sound
+      // fades with it), then retireLayer() stops it — so there are never two
+      // soundtracks, and the outgoing picture doesn't go black mid-fade.
+      fullVid.style.display = "none";
+      if (fullVid.src) { fullVid.pause(); fullVid.removeAttribute("src"); fullVid.load(); fullVid.volume = 1; }
+      const oldImg = layer.querySelector(".slideImage");
+      if (oldImg) oldImg.remove();
 
       // ── Shared background stage ──
       // Applied once, outside the crossfading layers, so a looping clip keeps
@@ -119,7 +122,8 @@
         resetBgFit();
         layer.classList.add("imageSlide");
       } else if (payload.image) {
-        layer.style.backgroundImage = `url("${payload.image.replace(/"/g, '\\"')}")`;
+        // The picture itself is put in by onShowSlide once it is decoded.
+        layer.style.backgroundImage = "none";
         resetBgFit();
         layer.classList.add("imageSlide");
       } else {
@@ -131,18 +135,41 @@
       }
     }
 
-    window.slideApi.onShowSlide((payload) => {
+    let seq = 0;
+    window.slideApi.onShowSlide(async (payload) => {
+      const my = ++seq;
       const dur = Math.max(0, Number(payload.transitionMs ?? 300));
       layers.forEach(l => l.style.setProperty("--trans", dur + "ms"));
       const next = layers[1 - active];
       renderInto(next, payload);
+      // A photo or clip fades in once it can be drawn (see bgStage.js); a
+      // newer slide arriving meanwhile takes over.
+      if (payload.image || payload.video) {
+        const img = await window.slideMediaReady(payload.video ? "video" : "image", payload.video || payload.image,
+          next.querySelector(".fullVideo"), payload.video ? 2500 : 3000);
+        if (my !== seq) return;
+        if (payload.image) {
+          const el = img || Object.assign(new Image(), { src: payload.image });
+          el.className = "slideImage"; el.alt = "";
+          next.appendChild(el);
+        }
+      }
+      // The words wait for their font, the first time it is used.
+      if (payload.text && next.dataset.font) {
+        await window.bpFonts.ready(next.dataset.font, !!next.dataset.bold, payload.text, 1500);
+        if (my !== seq) return;
+      }
       // Crossfade: the new layer fades in on top while the old fades out.
+      const out = layers[active];
       next.classList.add("visible");
-      layers[active].classList.remove("visible");
+      out.classList.remove("visible");
       active = 1 - active;
+      window.retireLayer(out, dur, ".fullVideo", ".slideImage");
     });
 
     window.slideApi.onClear(() => {
+      seq++;   // a photo or clip still loading must not appear after this
+      layers.forEach(l => { const im = l.querySelector(".slideImage"); if (im) im.remove(); });
       // The shared background stage is outside the layers, so clear it too —
       // otherwise a muted loop would keep running behind a blanked screen.
       bg.clear();

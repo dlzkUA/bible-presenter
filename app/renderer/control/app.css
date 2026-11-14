@@ -489,7 +489,11 @@ body.bibleTab #slideSizeBar { display: none; }
 #sectionsContainer .slideCard { background: #000; }
 #sectionsContainer .slideCardThumb { background: var(--song-img, none) center / var(--song-fit, cover) no-repeat, var(--song-bg, #000); }
 #sectionsContainer .slideCard:hover { box-shadow: 0 0 0 1px rgba(0, 0, 0, .55), 0 0 0 1px rgba(var(--sec-rgb), .45) inset, var(--sh-md); }
-.slideCard.live {
+/* The live ring must win over every hover style, including the song cards'
+   (an id selector): otherwise the clicked card, still under the mouse, shows
+   no ring until the pointer moves away. */
+.slideCard.live, .slideCard.live:hover,
+#sectionsContainer .slideCard.live, #sectionsContainer .slideCard.live:hover {
   box-shadow: 0 0 0 2px var(--red), 0 0 0 5px rgba(243, 139, 168, .16), 0 8px 24px -8px rgba(243, 139, 168, .35);
 }
 .slideCard.live::after {

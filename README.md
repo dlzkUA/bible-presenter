@@ -12,7 +12,7 @@ Windows 10/11 and macOS 11 or newer. Interface in 27 languages. The installer is
 - **Media.** Photos and videos, shown full screen.
 - **Backgrounds.** Photo or looping video behind the text, switched live without touching the theme.
 - **Service playlist.** The whole service in one list; the clicker's Next button runs from one item to the next.
-- **Live output.** A web page for vMix / OBS with its own lower-third look.
+- **Live output.** A web page for vMix / OBS with its own lower-third look. Pages reconnect by themselves when the program restarts, and a saved "File for vMix" waits for the program if vMix is opened first.
 - **Stage display.** Current line, next line, clock and service timer on any phone, tablet or screen on the network.
 - **Phone remote.** Any phone or tablet on the same Wi-Fi becomes a remote: next and back, clear the text, black out the screen, the slides of the current item, the whole service plan and the presentation library, with slide pictures. Pair it by scanning a QR code; nothing to install.
 - **Updates itself.** A new version downloads in the background and is installed when the app closes.
@@ -101,7 +101,7 @@ src-tauri/            the Rust core
   tauri.conf.json     app name, version, windows, installers, updater
 app/renderer/         the control panel (control/), the projector (output/), the phone remote (remote/)
   bridge.js           connects the pages to the Rust core
-  vendor/pdfjs/       PDF reader (Mozilla pdf.js)
+  vendor/pdfjs/       PDF reader (Mozilla pdf.js 4.10.38, legacy build)
 app/shared/           code used by both the projector and the live-output page
 build/                the source pictures for the app icon (npm run icons)
 docs/manual/          the user guide (English) for Notion

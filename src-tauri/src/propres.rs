@@ -122,7 +122,7 @@ pub fn import_pro_theme(path: &Path) -> Result<Value, String> {
     let file = fs::File::open(path).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipArchive::new(file).map_err(|_| "PROTHEME_INVALID: not a zip".to_string())?;
     let name = (0..zip.len())
-        .filter_map(|i| zip.by_index(i).ok().map(|f| f.name().to_string()))
+        .filter_map(|i| zip.by_index(i).ok().and_then(|f| f.name().ok().map(|n| n.to_string())))
         .find(|n| n.ends_with("/Theme") || n == "Theme")
         .ok_or("PROTHEME_INVALID: theme entry not found")?;
     let mut buf = Vec::new();
